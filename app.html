@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<title>Color Inventory</title>
+<style>
+/* ── Design system lifted from the Booster plugin: same variables, font and radii ── */
+:root{
+  --bg:#2c2c2c; --btn:#383838; --btn-hover:#444; --txt:#fff;
+  --icon:rgba(255,255,255,.85); --label:rgba(255,255,255,.5); --muted:rgba(255,255,255,.4);
+  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
+  --accent:#0c8ce9; --ok:#14ae5c; --warn:#ff8a1f;
+  --shadow:0 1px 3px rgba(0,0,0,.3); --shadow-lg:0 6px 16px rgba(0,0,0,.5);
+  --r:6px; --r-sm:5px; --r-xs:3px;
+}
+body.light{
+  --bg:#ffffff; --btn:#ebebeb; --btn-hover:#dedede; --txt:#1e1e1e;
+  --icon:rgba(0,0,0,.8); --label:rgba(0,0,0,.55); --muted:rgba(0,0,0,.4);
+  --line:rgba(0,0,0,.11); --line-soft:rgba(0,0,0,.06);
+  --shadow:0 1px 3px rgba(0,0,0,.12); --shadow-lg:0 6px 16px rgba(0,0,0,.18);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--txt);
+  /* Tabular numerals: a 1 takes the same width as a 9,
+     so columns of numbers stay aligned from row to row. */
+  font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1;
+  font-family:'Inter', system-ui, -apple-system, sans-serif;
+  font-size:12px; line-height:1.45; -webkit-font-smoothing:antialiased;
+  transition:background .15s;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 16px 72px}
+
+h1{font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0 0 3px}
+h2{font-size:13px;font-weight:600;margin:24px 0 8px;color:var(--txt)}
+.sub{color:var(--label);font-size:11px;margin:0 0 16px}
+.note{color:var(--label);font-size:11px;margin:8px 0}
+
+.top{display:flex;align-items:flex-start;gap:12px;margin-bottom:4px}
+.top h1{flex:1}
+.ic{width:28px;height:28px;border:none;border-radius:var(--r);background:var(--btn);
+  color:var(--icon);cursor:pointer;display:grid;place-items:center;flex:none;
+  transition:background .12s, transform .08s}
+.ic:hover{background:var(--btn-hover)}
+.ic:active{transform:scale(.94)}
+.ic svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.5;
+  stroke-linecap:round;stroke-linejoin:round}
+
+.stats{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.stat{background:var(--btn);border-radius:var(--r);padding:8px 12px;min-width:98px}
+.stat b{display:block;font-size:16px;font-weight:600;letter-spacing:-.01em}
+.stat span{color:var(--label);font-size:10.5px}
+
+.tabs{display:flex;gap:2px;background:var(--btn);border-radius:var(--r);padding:3px;
+  margin-bottom:14px;flex-wrap:wrap}
+/* Ширина таба не должна зависеть от состояния: активный становится полужирным,
+   а полужирный текст шире обычного и сдвигал бы соседей. Поэтому в той же ячейке
+   лежит невидимая полужирная копия подписи — она и задаёт ширину всегда. */
+.tab{border:none;background:none;color:var(--label);font:inherit;font-size:11.5px;
+  padding:6px 11px;border-radius:var(--r-sm);cursor:pointer;white-space:nowrap;
+  display:grid;place-items:center;transition:background .12s,color .12s}
+.tab > span{grid-area:1/1}
+.tab::after{content:attr(data-label);grid-area:1/1;font-weight:600;visibility:hidden}
+.tab:hover{color:var(--txt)}
+.tab.on{background:var(--bg);color:var(--txt);font-weight:600;box-shadow:var(--shadow)}
+.page{display:none}.page.on{display:block}
+
+input[type=search],input[type=text],select{
+  background:var(--btn);border:1px solid transparent;color:var(--txt);
+  border-radius:var(--r-sm);padding:7px 10px;font:inherit;font-size:11.5px;outline:none;
+  transition:border-color .12s, background .12s}
+input::placeholder{color:var(--muted)}
+input:focus,select:focus{border-color:var(--accent)}
+select{cursor:pointer}
+.row1{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px}
+.row1 input[type=search],.row1 input[type=text]{flex:1;min-width:190px}
+
+button.b{border:none;background:var(--btn);color:var(--txt);border-radius:var(--r-sm);
+  padding:7px 12px;font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap;
+  transition:background .12s, transform .08s}
+button.b:hover:not(:disabled){background:var(--btn-hover)}
+button.b:active:not(:disabled){transform:scale(.97)}
+button.b:disabled{opacity:.4;cursor:default}
+button.b.main{background:var(--accent);color:#fff}
+button.b.main:hover:not(:disabled){filter:brightness(1.08)}
+
+.chips{display:flex;gap:4px;flex-wrap:wrap;margin:8px 0}
+.chip{border:none;background:var(--btn);color:var(--label);border-radius:var(--r-sm);
+  padding:5px 9px;font:inherit;font-size:11px;cursor:pointer;user-select:none;
+  display:flex;align-items:center;gap:5px;transition:background .12s,color .12s}
+.chip:hover{background:var(--btn-hover);color:var(--txt)}
+.chip.on{background:var(--accent);color:#fff}
+.chip i{width:9px;height:9px;border-radius:var(--r-xs);display:inline-block;
+  box-shadow:inset 0 0 0 1px rgba(128,128,128,.35)}
+
+.cnt{color:var(--label);font-size:11px;margin:8px 0}
+.list{display:flex;flex-direction:column;gap:3px}
+.c{background:var(--btn);border-radius:var(--r);overflow:hidden;transition:background .12s}
+.c:hover{background:var(--btn-hover)}
+.c.open{background:var(--btn)}
+.ch{display:grid;grid-template-columns:32px 186px 116px 1fr 196px 12px;
+  gap:12px;align-items:center;padding:8px 11px;cursor:pointer}
+.ch > .n{text-align:right}
+.ch > .tok{text-align:right}
+.sw{width:32px;height:32px;border-radius:var(--r-sm);flex:none;position:relative;
+  background-image:linear-gradient(45deg,#8a8a8a 25%,transparent 25%,transparent 75%,#8a8a8a 75%),
+                   linear-gradient(45deg,#8a8a8a 25%,transparent 25%,transparent 75%,#8a8a8a 75%);
+  background-size:8px 8px;background-position:0 0,4px 4px;
+  box-shadow:inset 0 0 0 1px rgba(128,128,128,.3)}
+.sw em{position:absolute;inset:0;border-radius:var(--r-sm);display:block}
+.hex{font:600 11.5px/1.3 ui-monospace, Menlo, Consolas, monospace;letter-spacing:.01em}
+.fam{color:var(--muted);font-size:10.5px;margin-top:1px}
+.n{font-size:13px;font-weight:600}
+.n span{font-weight:400;color:var(--muted);font-size:10.5px}
+.meta{color:var(--label);font-size:11px}
+.tok{font-size:11px;color:var(--ok);word-break:break-word}
+.tok.no{color:var(--muted)}
+.gradonly{color:var(--warn)}
+.arw{color:var(--muted);font-size:10px;justify-self:end;transition:transform .15s}
+.c.open .arw{transform:rotate(180deg)}
+.body{display:none;border-top:1px solid var(--line-soft);padding:2px 11px 10px}
+.c.open .body{display:block}
+.pg{padding:8px 0;border-bottom:1px solid var(--line-soft)}
+.pg:last-child{border-bottom:none}
+.pgh{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap;margin-bottom:5px}
+.pgf{font-weight:600;font-size:11.5px}
+.pgp{color:var(--label);font-size:11px}
+.pgn{margin-left:auto;color:var(--muted);font-size:10.5px}
+.links{display:flex;gap:4px;flex-wrap:wrap}
+.links a{display:inline-flex;align-items:center;gap:4px;background:var(--bg);
+  border-radius:var(--r-xs);padding:3px 7px;font-size:10.5px;color:var(--txt);
+  text-decoration:none;max-width:240px;transition:color .12s, background .12s}
+.links a:hover{color:var(--accent)}
+.links a b{font-weight:600;color:var(--muted);font-size:10px}
+.links a s{text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.more{color:var(--muted);font-size:11px;padding-top:7px}
+
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th{text-align:left;color:var(--muted);font-weight:400;font-size:10.5px;
+  padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+td.r,th.r{text-align:right;color:var(--label);width:120px;white-space:nowrap}
+tbody tr:hover td{background:var(--btn)}
+
+.gch{display:grid;grid-template-columns:76px 1fr 116px 150px 12px;gap:12px;align-items:center;padding:8px 11px;cursor:pointer}
+.gch > .n{text-align:right}
+.gbar{height:28px;border-radius:var(--r-sm);box-shadow:inset 0 0 0 1px rgba(128,128,128,.3)}
+.stops{display:flex;gap:3px;flex-wrap:wrap;margin-top:4px}
+.stops span{font:10.5px ui-monospace, Menlo, Consolas, monospace;background:var(--bg);
+  border-radius:var(--r-xs);padding:1px 5px;color:var(--label)}
+.prog{height:4px;background:var(--btn);border-radius:2px;overflow:hidden;margin:7px 0}
+.prog i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+.log{font:10.5px ui-monospace, Menlo, Consolas, monospace;color:var(--label);
+  max-height:140px;overflow:auto;background:var(--btn);border-radius:var(--r-sm);
+  padding:7px 9px;margin-top:7px}
+.pill{display:inline-block;border-radius:var(--r-xs);padding:1px 6px;font-size:10px;
+  background:var(--bg);color:var(--muted)}
+.pill.ok{color:var(--ok)}
+.toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,14px);opacity:0;
+  background:var(--btn);color:var(--txt);border-radius:var(--r);padding:9px 14px;
+  font-size:11.5px;box-shadow:var(--shadow-lg);pointer-events:none;z-index:50;
+  transition:opacity .16s, transform .16s;max-width:70vw}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+.toast.bad{color:#ff6b6b}
+.empty{color:var(--muted);padding:32px 0;text-align:center;font-size:11.5px}
+@media (max-width:760px){
+  .ch{grid-template-columns:36px 1fr auto;gap:8px}
+  .ch .meta,.ch .tok{grid-column:2/-1}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>Color Inventory</h1>
+    <button class="ic" id="theme" title="Switch between light and dark"></button>
+  </div>
+  <p class="sub" id="sub">Loading…</p>
+  <div class="stats" id="stats"></div>
+
+  <div class="row1" style="margin:0 0 14px">
+    <input type="search" id="pagefilter" placeholder="Filter by page name — stage, chat, core…"
+           title="Limits every tab to pages whose name contains this text. Case-insensitive. Leave empty for all pages."
+           style="flex:1;min-width:240px">
+    <button class="b" id="pfapply">Apply</button>
+    <button class="b" id="pfreset">Reset</button>
+    <span class="note" id="pfnote" style="margin:0"></span>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="page" id="p-summary"></div>
+
+  <div class="page" id="p-sources">
+    <div class="row1">
+      <input type="text" id="newlink" placeholder="Figma link — a file, a page or a frame"
+             title="Paste a link from Figma. A file link crawls its matching pages; a page or frame link crawls just that.">
+      <button class="b" id="addbtn">Add source</button>
+      <button class="b main" id="allbtn" title="Re-crawl every source from scratch">Rescan all</button>
+      <button class="b" id="stopbtn" hidden>Stop</button>
+      <button class="b" id="exportbtn" title="Save a standalone HTML file you can send to anyone">Export report</button>
+    </div>
+    <div class="row1" style="margin-top:4px">
+      <input type="text" id="crawlfilter" placeholder="Pages to crawl — e.g. stage"
+             title="Only pages whose name contains this text are downloaded. Empty crawls every page. Archive pages are never crawled."
+             style="flex:1;min-width:240px">
+      <select id="workers" title="How many files to crawl at the same time">
+        <option value="1">1 thread</option><option value="2">2 threads</option>
+        <option value="4">4 threads</option><option value="6">6 threads</option>
+        <option value="8">8 threads</option></select>
+      <button class="b" id="savefilter">Apply settings</button>
+      <span class="note" style="margin:0">Case-insensitive. Archive pages are never crawled.</span>
+    </div>
+    <div id="jobbox"></div>
+    <div id="srclist"></div>
+  </div>
+
+  <div class="page" id="p-colors">
+    
+    <div class="row1">
+      <input type="search" id="q" placeholder="Search hex, token, file or page">
+      <select id="sort"><option value="t">Most used</option><option value="l">By lightness</option>
+        <option value="f">By group</option><option value="nf">By file count</option></select>
+      <select id="kind"><option value="">All colors</option><option value="o">Fills only</option>
+        <option value="b">Also in gradients</option><option value="n">Without a token</option>
+        <option value="h">Set by hand</option><option value="r">Rare — 10 uses or fewer</option></select>
+    </div>
+    <div class="chips" id="fams"></div>
+    <div class="cnt" id="cnt"></div>
+    <div class="list" id="list"></div>
+    <button class="b" id="more" style="width:100%;margin-top:16px" hidden>Show more</button>
+  </div>
+
+  <div class="page" id="p-gradcolors">
+    
+    <div class="row1">
+      <input type="search" id="qG" placeholder="Search hex, token, file or page">
+      <select id="sortG"><option value="t">Most used</option><option value="l">By lightness</option>
+        <option value="f">By group</option><option value="nf">By file count</option></select>
+      <select id="kindG"><option value="">All colors</option><option value="o">Gradients only</option>
+        <option value="b">Also in fills</option><option value="n">Without a token</option>
+        <option value="h">Set by hand</option><option value="r">Rare — 10 uses or fewer</option></select>
+    </div>
+    <div class="chips" id="famsG"></div>
+    <div class="cnt" id="cntG"></div>
+    <div class="list" id="listG"></div>
+    <button class="b" id="moreG" style="width:100%;margin-top:16px" hidden>Show more</button>
+  </div>
+
+  <div class="page" id="p-grads">
+    
+    <div class="row1">
+      <input type="search" id="gq" placeholder="Search stop hex, file or page">
+      <select id="gsort"><option value="n">Most used</option><option value="s">By stop count</option>
+        <option value="f">By file count</option></select>
+    </div>
+    <div class="cnt" id="gcnt"></div>
+    <div class="list" id="glist"></div>
+    <button class="b" id="gmore" style="width:100%;margin-top:16px" hidden>Show more</button>
+  </div>
+
+  <div class="page" id="p-tokens"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+
+/* ─── Toast: short confirmation instead of a blocking dialog ─── */
+let toastTimer;
+function toast(text, bad){
+  const el = $('#toast');
+  el.textContent = text;
+  el.classList.toggle('bad', !!bad);
+  el.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('on'), 2600);
+}
+
+/* ─── Theme: sun/moon toggle, remembered between visits ─── */
+const IC_SUN  = '<svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="3.4"/><path d="M9 1.4v2M9 14.6v2M1.4 9h2M14.6 9h2M3.6 3.6l1.4 1.4M13 13l1.4 1.4M14.4 3.6L13 5M5 13l-1.4 1.4"/></svg>';
+const IC_MOON = '<svg viewBox="0 0 18 18"><path d="M15 10.8A6.6 6.6 0 017.2 3a6.6 6.6 0 107.8 7.8z"/></svg>';
+function applyTheme(light){
+  document.body.classList.toggle('light', light);
+  $('#theme').innerHTML = light ? IC_MOON : IC_SUN;
+  try { localStorage.setItem('theme', light ? 'light' : 'dark'); } catch (e) { /* private window */ }
+}
+(function initTheme(){
+  let light = false;
+  try {
+    const saved = localStorage.getItem('theme');
+    light = saved ? saved === 'light'
+                  : window.matchMedia('(prefers-color-scheme: light)').matches;
+  } catch (e) { /* no storage access — fall back to dark */ }
+  applyTheme(light);
+})();
+$('#theme').addEventListener('click', () => applyTheme(!document.body.classList.contains('light')));
+// Older crawls stored slot names in Russian; map them so old data still reads right.
+const SLOT = {'заливка':'fill','обводка':'stroke'};
+const slot = (v) => SLOT[v] || v || '';
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num = (n) => Number(n || 0).toLocaleString('en-US').replace(/,/g, '\u2009');
+let D = null, S = null;
+// In the exported report the data is inlined here and the page works with no server:
+// the Sources tab is removed and the crawl controls are not needed.
+const EMBEDDED = /*__DATA__*/ null;
+
+// Порядок по ходу работы: подключил источники → увидел итог → разобрал по частям → сверил с китом.
+const TABS = [['sources','Sources'],['summary','Summary'],['colors','Colors'],
+              ['gradcolors','Gradient colors'],['grads','Gradients'],['tokens','Tokens']];
+let tab = 'summary';
+$('#tabs').innerHTML = TABS.map(([id,l]) =>
+  `<button class="tab" data-t="${id}" data-label="${l}"><span>${l}</span></button>`).join('');
+$('#tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) show(b.dataset.t); });
+function show(t){
+  tab = t;
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'p' + '-' + t));
+  // Срез по страницам режет данные, а не настройки — на вкладке источников он лишний.
+  const pf = $('#pagefilter').closest('.row1');
+  if (pf) pf.style.display = (t === 'sources') ? 'none' : '';
+}
+
+async function api(path, body){
+  const o = body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {};
+  const r = await fetch(path, o);
+  return r.json();
+}
+
+const link = (fi, id) => {
+  const t = (id[0] === 'I' && id.includes(';')) ? id.slice(1).split(';')[0] : id;
+  return `https://www.figma.com/design/${D.files[fi][0]}?node-id=${t.replace(/:/g,'-')}`;
+};
+const inInst = (id) => id[0] === 'I' && id.includes(';');
+
+function pagesBlock(list, more, labelN){
+  return list.map(p => {
+    const pg = D.pages[p[0]];
+    const seen = new Set(); const uniq = [];
+    for (const x of p[2]) {
+      const t = inInst(x[0]) ? x[0].slice(1).split(';')[0] : x[0];
+      if (seen.has(t)) continue; seen.add(t); uniq.push([t, x[1], x[2], inInst(x[0])]);
+    }
+    const links = uniq.map((x,i) =>
+      `<a href="${link(pg[0], x[0])}" target="_blank" rel="noopener" title="${esc(x[1])} · ${esc(slot(x[2]))}${x[3]?' · opens the containing instance':''}"><b>${i+1}</b><s>${esc(x[1]||x[0])}</s>${x[3]?'<u style="text-decoration:none;opacity:.5">↗</u>':''}</a>`).join('');
+    return `<div class="pg"><div class="pgh"><span class="pgf">${esc(D.files[pg[0]][1])}</span>
+      <span class="pgp">${esc(pg[2])}</span><span class="pgn">${num(p[1])} ${labelN}</span></div>
+      <div class="links">${links}</div></div>`;
+  }).join('') + (more ? `<div class="more">…and ${more} more pages</div>` : '');
+}
+
+/* ─── Summary ─── */
+function renderSummary(){
+  const st = D.stats;
+  const famCount = {}; D.colors.forEach(c => famCount[c.f] = (famCount[c.f]||0)+1);
+  const max = Math.max(1, ...Object.values(famCount));
+  const sw = {Neutral:'#9aa0ad',White:'#ffffff',Black:'#111318',Red:'#ff2d55',Orange:'#ff7000',
+    Yellow:'#ffcc00',Green:'#30cb44',Teal:'#0998ae',Blue:'#0066ff',Purple:'#7444c7',Magenta:'#cc056e'};
+  $('#p-summary').innerHTML = `
+    <h2>Coverage</h2>
+    <table><tbody>
+      <tr><td>Files</td><td class="r">${num(st.files)}</td></tr>
+      <tr><td>Pages</td><td class="r">${num(st.pages)}</td></tr>
+      <tr><td>Layers scanned</td><td class="r">${num(st.nodes)}</td></tr>
+      <tr><td>Failures</td><td class="r">${num(st.errors)}</td></tr>
+    </tbody></table>
+
+    <h2>Colors</h2>
+    <table><tbody>
+      <tr><td>Unique colors</td><td class="r">${num(st.colors)}</td></tr>
+      <tr><td>In fills and strokes</td><td class="r">${num(st.flatOnly + st.both)}</td></tr>
+      <tr><td>In gradients</td><td class="r">${num(st.gradOnly + st.both)}</td></tr>
+      <tr><td style="padding-left:20px;opacity:.75">fills only</td><td class="r">${num(st.flatOnly)}</td></tr>
+      <tr><td style="padding-left:20px;opacity:.75">gradients only</td><td class="r">${num(st.gradOnly)}</td></tr>
+      <tr><td style="padding-left:20px;opacity:.75">both</td><td class="r">${num(st.both)}</td></tr>
+      <tr><td>Matching a token value</td><td class="r">${num(st.withToken)}</td></tr>
+      <tr><td>Used 10 times or fewer</td><td class="r">${num(st.rare)}</td></tr>
+    </tbody></table>
+
+    <h2>Usage</h2>
+    <table><tbody>
+      <tr><td>Total</td><td class="r">${num(st.uses)}</td></tr>
+      <tr><td>In fills and strokes</td><td class="r">${num(st.flat)}</td></tr>
+      <tr><td>In gradients</td><td class="r">${num(st.gradUses)}</td></tr>
+      <tr><td>Set by hand — no variable, no style</td><td class="r">${num(st.raw)}</td></tr>
+    </tbody></table>
+
+    <h2>Gradients</h2>
+    <table><tbody>
+      <tr><td>Distinct recipes</td><td class="r">${num(st.grads)}</td></tr>
+      <tr><td>Most used</td><td class="r">${D.grads.length ? esc(D.grads[0].r) + ' · ' + num(D.grads[0].n) : '—'}</td></tr>
+    </tbody></table>
+
+    <h2>Tokens</h2>
+    <table><tbody>
+      <tr><td>Color tokens in the kit</td><td class="r">${num(st.tokensTotal)}</td></tr>
+      <tr><td>Found in designs</td><td class="r">${num(st.tokensUsed)}</td></tr>
+      <tr><td>Never used</td><td class="r">${num(st.tokensTotal - st.tokensUsed)}</td></tr>
+    </tbody></table>
+
+    <h2>By group</h2>
+    <table><tbody>${D.fams.filter(f=>famCount[f]).map(f=>`<tr>
+      <td style="width:150px"><span class="sw" style="width:11px;height:11px;display:inline-block;vertical-align:-2px;margin-right:6px"><em style="background:${sw[f]}"></em></span>${D.famru[f]}</td>
+      <td><span style="display:inline-block;height:8px;border-radius:4px;background:${sw[f]};width:${Math.round(100*famCount[f]/max)}%;min-width:3px"></span></td>
+      <td class="r" style="width:60px">${num(famCount[f])}</td></tr>`).join('')}</tbody></table>
+
+    <h2>Pages skipped</h2>
+    <p class="note">${(st.skipped||[]).map(([n,k]) => `${esc(n)} <span style="opacity:.55">×${k}</span>`).join(', ') || '—'}</p>`;
+}
+
+/* ─── Sources ─── */
+function renderSources(){
+  const job = S.job || {};
+  $('#allbtn').disabled = !!job.active;
+  $('#addbtn').disabled = !!job.active;
+  $('#stopbtn').hidden = !job.active;
+  if (job.active) {
+    const pct = job.total ? Math.round(100*job.done/job.total) : 0;
+    $('#jobbox').innerHTML = `<div class="note">Crawling ${job.done} of ${job.total}${job.current?' · '+esc(job.current):''}</div>
+      <div class="prog"><i style="width:${pct}%"></i></div>
+      ${job.log && job.log.length ? `<div class="log">${job.log.map(esc).join('<br>')}</div>` : ''}`;
+  } else if (job.log && job.log.length) {
+    $('#jobbox').innerHTML = `<div class="note">Last crawl finished</div><div class="log">${job.log.map(esc).join('<br>')}</div>`;
+  } else {
+    $('#jobbox').innerHTML = '';
+  }
+  const rows = (S.sources||[]).map(s => {
+    const sid = s.key + (s.node ? '|' + s.node : '');
+    return `<tr>
+      <td><b>${esc(s.name)}</b>${s.node?' <span class="pill">page</span>':''}<br>
+          <a href="${esc(s.link)}" target="_blank" rel="noopener" style="color:var(--label);font-size:10.5px">Open in Figma</a></td>
+      <td class="r">${s.scanned ? num(s.pages) : '—'}</td>
+      <td class="r">${s.scanned ? num(s.nodes) : '—'}</td>
+      <td class="r">${s.scanned ? esc(s.at) : '<span class="pill">not crawled</span>'}</td>
+      <td class="r">${s.errors ? '<span class="pill" style="color:var(--warn)">'+s.errors+'</span>' : ''}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="b" data-ref="${esc(sid)}" ${job.active?'disabled':''} title="Crawl this source again">Rescan</button>
+        <button class="b" data-del="${esc(sid)}" ${job.active?'disabled':''} title="Remove from the list; collected data stays">Remove</button></td></tr>`;
+  }).join('');
+  $('#srclist').innerHTML = `<table><thead><tr><th>Source</th><th class="r">Pages</th>
+    <th class="r">Layers</th><th class="r">Updated</th><th class="r">Errors</th><th style="width:150px"></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="6" class="empty">No sources yet</td></tr>'}</tbody></table>`;
+}
+
+$('#srclist').addEventListener('click', async e => {
+  const r = e.target.closest('[data-ref]'), d = e.target.closest('[data-del]');
+  if (r) { await api('/api/refresh', {sids:[r.dataset.ref]}); poll(); }
+  if (d) { if (confirm('Remove this source from the list? Collected data stays on disk.')) { await api('/api/remove', {sid:d.dataset.del}); poll(); } }
+});
+$('#allbtn').addEventListener('click', async () => {
+  if (!confirm('Crawl every source again from scratch?')) return;
+  await api('/api/refresh', {sids:'all'}); poll();
+});
+$('#stopbtn').addEventListener('click', async () => { await api('/api/stop'); poll(); });
+$('#addbtn').addEventListener('click', async () => {
+  const v = $('#newlink').value.trim(); if (!v) return;
+  const r = await api('/api/add', {link:v});
+  if (!r.ok) { toast(r.error || 'Could not add that link', true); return; }
+  $('#newlink').value = ''; toast('Source added'); poll();
+});
+$('#exportbtn').addEventListener('click', async () => {
+  $('#exportbtn').disabled = true; $('#exportbtn').textContent = 'Exporting…';
+  const r = await api('/api/export', {});
+  $('#exportbtn').disabled = false; $('#exportbtn').textContent = 'Export report';
+  toast(r.ok ? 'Report saved as ' + r.file : (r.error || 'Export failed'), !r.ok);
+});
+
+/* ─── Colors: one engine drives both color tabs ─── */
+const SWATCH = {Neutral:'#9aa0ad',White:'#ffffff',Black:'#111318',Red:'#ff2d55',Orange:'#ff7000',
+  Yellow:'#ffcc00',Green:'#30cb44',Teal:'#0998ae',Blue:'#0066ff',Purple:'#7444c7',Magenta:'#cc056e'};
+
+function colorCard(c){
+  const rgba = c.a < 100 ? `rgba(${parseInt(c.x.slice(1,3),16)},${parseInt(c.x.slice(3,5),16)},${parseInt(c.x.slice(5,7),16)},${c.a/100})` : c.x;
+  const parts = [];
+  if (c.fl) parts.push(`${num(c.fl)} fill`);
+  if (c.gr) parts.push(`<span class="${c.fl?'':'gradonly'}">${num(c.gr)} gradient</span>`);
+  if (c.rw) parts.push(`${num(c.rw)} by hand`);
+  const tok = c.tk.length ? `<div class="tok">${esc(c.tk[0])}${c.tk.length>1?` <span style="opacity:.6">+${c.tk.length-1}</span>`:''}</div>` : `<div class="tok no">no token</div>`;
+  return `<div class="c"><div class="ch">
+    <div class="sw"><em style="background:${rgba}"></em></div>
+    <div><div class="hex">${esc(c.k)}</div><div class="fam">${D.famru[c.f]}</div></div>
+    <div class="n">${num(c.t)} <span>in ${c.nf}</span></div>
+    <div class="meta">${parts.join(' · ')}</div>${tok}<div class="arw">▾</div>
+    </div><div class="body">${pagesBlock(c.p, c.more, 'uses')}</div></div>`;
+}
+
+// sfx — id suffix for this tab's controls; base — which colors belong here;
+// otherField — the "other role" counter used by the "only here" / "also there" filters.
+function makeColorView(sfx, base, otherField){
+  const el = (id) => $('#' + id + sfx);
+  const famSel = new Set();
+  let cur = [], shown = 0;
+  const PAGE = 120;
+
+  function filtered(){
+    const q = el('q').value.trim().toLowerCase(), kind = el('kind').value;
+    let a = D.colors.filter(base).filter(c => {
+      if (famSel.size && !famSel.has(c.f)) return false;
+      if (kind === 'o' && c[otherField]) return false;
+      if (kind === 'b' && !c[otherField]) return false;
+      if (kind === 'n' && c.tk.length) return false;
+      if (kind === 'h' && !c.rw) return false;
+      if (kind === 'r' && c.t > 10) return false;
+      if (!q) return true;
+      if (c.k.toLowerCase().includes(q)) return true;
+      if (c.tk.some(t => t.toLowerCase().includes(q))) return true;
+      return c.p.some(p => { const pg = D.pages[p[0]];
+        return pg[2].toLowerCase().includes(q) || D.files[pg[0]][1].toLowerCase().includes(q); });
+    });
+    const srt = el('sort').value;
+    if (srt === 't') a.sort((x,y)=>y.t-x.t);
+    else if (srt === 'l') a.sort((x,y)=>x._l-y._l||x._h-y._h);
+    else if (srt === 'nf') a.sort((x,y)=>y.nf-x.nf||y.t-x.t);
+    else a.sort((x,y)=>D.fams.indexOf(x.f)-D.fams.indexOf(y.f)||x._l-y._l);
+    return a;
+  }
+
+  function render(reset){
+    if (reset){ cur = filtered(); shown = 0; el('list').innerHTML=''; }
+    const slice = cur.slice(shown, shown+PAGE);
+    el('list').insertAdjacentHTML('beforeend', slice.map(colorCard).join(''));
+    shown += slice.length;
+    el('more').hidden = shown >= cur.length;
+    el('cnt').textContent = cur.length
+      ? `${num(Math.min(shown,cur.length))} of ${num(cur.length)} colors · ${num(cur.reduce((a,c)=>a+c.t,0))} uses`
+      : '';
+    if (!cur.length) el('list').innerHTML = '<div class="empty">Nothing matches</div>';
+  }
+
+  function buildFams(){
+    const cnt = {};
+    D.colors.filter(base).forEach(c => cnt[c.f] = (cnt[c.f]||0)+1);
+    el('fams').innerHTML = D.fams.filter(f=>cnt[f]).map(f =>
+      `<button class="chip${famSel.has(f)?' on':''}" data-f="${f}"><i style="background:${SWATCH[f]}"></i>${D.famru[f]} <b style="font-weight:400;opacity:.6">${cnt[f]}</b></button>`).join('');
+  }
+
+  el('fams').addEventListener('click', e => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    const f = b.dataset.f;
+    if (famSel.has(f)) { famSel.delete(f); b.classList.remove('on'); } else { famSel.add(f); b.classList.add('on'); }
+    render(true);
+  });
+  el('more').addEventListener('click', () => render(false));
+  let tmr; el('q').addEventListener('input', () => { clearTimeout(tmr); tmr = setTimeout(()=>render(true),160); });
+  el('sort').addEventListener('change', ()=>render(true));
+  el('kind').addEventListener('change', ()=>render(true));
+
+  return { render: render, buildFams: buildFams };
+}
+
+const viewFlat = makeColorView('',  c => c.fl > 0, 'gr');
+const viewGrad = makeColorView('G', c => c.gr > 0, 'fl');
+
+/* ─── Gradient recipes ─── */
+let gcur = [], gshown = 0;
+const GPAGE = 120;
+function gradCard(g){
+  const css = g.s.map(k => {
+    const a = k.includes('@') ? Number(k.split('@')[1].replace('%','')) / 100 : 1;
+    const h = k.split('@')[0];
+    return `rgba(${parseInt(h.slice(1,3),16)},${parseInt(h.slice(3,5),16)},${parseInt(h.slice(5,7),16)},${a})`;
+  }).join(',');
+  return `<div class="c"><div class="ch gch">
+    <div class="gbar" style="background:linear-gradient(90deg,${css})"></div>
+    <div><div class="hex">${esc(g.r)}</div><div class="stops">${g.s.map(k=>`<span>${esc(k)}</span>`).join('')}</div></div>
+    <div class="n">${num(g.n)} <span>in ${g.nf}</span></div>
+    <div class="meta">${g.ty.toLowerCase()} · ${g.ns} ${g.ns===1?'stop':'stops'}</div>
+    <div class="arw">▾</div></div>
+    <div class="body">${pagesBlock(g.p, g.more, 'uses')}</div></div>`;
+}
+function gradsFiltered(){
+  const q = $('#gq').value.trim().toLowerCase();
+  let a = D.grads.filter(g => {
+    if (!q) return true;
+    if (g.r.toLowerCase().includes(q)) return true;
+    return g.p.some(p => { const pg = D.pages[p[0]];
+      return pg[2].toLowerCase().includes(q) || D.files[pg[0]][1].toLowerCase().includes(q); });
+  });
+  const s = $('#gsort').value;
+  if (s==='n') a.sort((x,y)=>y.n-x.n);
+  else if (s==='s') a.sort((x,y)=>y.ns-x.ns||y.n-x.n);
+  else a.sort((x,y)=>y.nf-x.nf||y.n-x.n);
+  return a;
+}
+function renderGrads(reset){
+  if (reset){ gcur = gradsFiltered(); gshown = 0; $('#glist').innerHTML=''; }
+  const slice = gcur.slice(gshown, gshown+GPAGE);
+  $('#glist').insertAdjacentHTML('beforeend', slice.map(gradCard).join(''));
+  gshown += slice.length;
+  $('#gmore').hidden = gshown >= gcur.length;
+  $('#gcnt').textContent = gcur.length ? `${num(Math.min(gshown,gcur.length))} of ${num(gcur.length)} gradients · ${num(gcur.reduce((a,g)=>a+g.n,0))} uses` : '';
+  if (!gcur.length) $('#glist').innerHTML = '<div class="empty">Nothing matches</div>';
+}
+
+/* ─── Tokens ─── */
+function renderTokens(){
+  const t = D.tokens;
+  const row = x => {
+    const sw = v => v ? `<span class="sw" style="width:14px;height:14px;display:inline-block;vertical-align:-3px;margin-right:6px"><em style="background:${v.includes('@')?`rgba(${parseInt(v.slice(1,3),16)},${parseInt(v.slice(3,5),16)},${parseInt(v.slice(5,7),16)},${Number(v.split('@')[1].replace('%',''))/100})`:v}"></em></span>` : '';
+    return `<tr><td><b>${esc(x.name)}</b><br><span style="color:var(--dim);font-size:12px">${esc(x.col||'')}${x.shelf?' · '+esc(x.shelf):''}</span></td>
+      <td style="font:12.5px ui-monospace,Menlo,monospace">${sw(x.v1)}${esc(x.v1)}${x.v2&&x.v2!==x.v1?`<br>${sw(x.v2)}${esc(x.v2)}`:''}</td>
+      <td class="r">${x.n?num(x.n):''}</td>
+      <td class="r">${x.used?'<span class="pill ok">in designs</span>':'<span class="pill">unused</span>'}</td></tr>`;
+  };
+  $('#p-tokens').innerHTML = `<table><thead><tr><th>Token</th><th>Value</th><th class="r">Uses</th><th class="r">Status</th></tr></thead>
+    <tbody>${t.map(row).join('') || '<tr><td colspan="4" class="empty">No token reference loaded — drop a tokens.json next to the tool</td></tr>'}</tbody></table>`;
+}
+
+/* ─── Wiring and load ─── */
+document.addEventListener('click', e => { const h = e.target.closest('.ch'); if (h) h.parentElement.classList.toggle('open'); });
+$('#gmore').addEventListener('click', () => renderGrads(false));
+let gtmr; $('#gq').addEventListener('input', () => { clearTimeout(gtmr); gtmr = setTimeout(()=>renderGrads(true),160); });
+$('#gsort').addEventListener('change', ()=>renderGrads(true));
+
+let pageFilter = '';
+async function loadData(){
+  D = EMBEDDED || await api('/api/data' + (pageFilter ? '?pages=' + encodeURIComponent(pageFilter) : ''));
+  const st = D.stats;
+  const pf = D.pageFilter || '';
+  $('#sub').textContent = `${num(st.files)} files · ${num(st.pages)} pages · ${num(st.nodes)} layers · updated ${D.built}`;
+  $('#pfnote').textContent = pf ? `filtered to pages containing “${pf}”` : 'all crawled pages';
+  const nFlat = D.colors.filter(c=>c.fl).length, nGrad = D.colors.filter(c=>c.gr).length;
+  $('#stats').innerHTML = [
+    [num(st.colors),'unique colors'],[num(nFlat),'in fills'],[num(nGrad),'in gradients'],
+    [num(st.grads),'gradient recipes'],[num(st.uses),'uses'],[num(st.colors-st.withToken),'without a token'],
+  ].map(([b,s])=>`<div class="stat"><b>${b}</b><span>${s}</span></div>`).join('');
+  viewFlat.buildFams(); viewGrad.buildFams();
+  renderSummary(); viewFlat.render(true); viewGrad.render(true); renderGrads(true); renderTokens();
+}
+
+async function applyPageFilter(v){
+  pageFilter = (v || '').trim();
+  $('#pagefilter').value = pageFilter;
+  $('#pfnote').textContent = 'calculating…';
+  await loadData();
+}
+$('#pfapply').addEventListener('click', () => applyPageFilter($('#pagefilter').value));
+$('#pagefilter').addEventListener('keydown', e => { if (e.key === 'Enter') applyPageFilter($('#pagefilter').value); });
+$('#pfreset').addEventListener('click', () => applyPageFilter(''));
+$('#savefilter').addEventListener('click', async () => {
+  const r = await api('/api/settings', {pageFilter: $('#crawlfilter').value, workers: Number($('#workers').value)});
+  toast(r.ok ? 'Settings saved — they apply to the next crawl' : 'Could not save', !r.ok);
+});
+
+let wasActive = false;
+async function poll(){
+  S = await api('/api/state');
+  if (S.settings && document.activeElement !== $('#crawlfilter')) $('#crawlfilter').value = S.settings.pageFilter || '';
+  if (S.settings && S.settings.workers) $('#workers').value = String(S.settings.workers);
+  renderSources();
+  const active = !!(S.job && S.job.active);
+  if (wasActive && !active) await loadData();   // crawl finished — reload the data
+  wasActive = active;
+}
+(async () => {
+  if (EMBEDDED) {
+    // Shareable report: no sources, no crawling — data only.
+    document.querySelector('[data-t="sources"]').remove();
+    document.querySelector('#p-sources').remove();
+    const pf = document.querySelector('#pagefilter');
+    if (pf) pf.closest('.row1').remove();
+    await loadData(); show('summary');
+    return;
+  }
+  await loadData();
+  // Пустая установка открывается на источниках: там первое действие.
+  show(D.stats.files ? 'summary' : 'sources');
+  await poll(); setInterval(poll, 2500);
+})();
+</script>
+</body>
+</html>
