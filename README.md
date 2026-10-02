@@ -8,7 +8,34 @@ product*, *how many of them have no token behind them*, and *where to find them*
 
 [Русская версия](README.ru.md)
 
-![tabs: Summary, Sources, Colors, Gradient colors, Gradients, Tokens](docs/screenshot.png)
+![Colors tab](docs/colors.png)
+
+*Every colour, how often it is applied, how much of that is set by hand, and
+which token carries the same value. Click a row to get links to the layers.*
+
+<details>
+<summary>More screenshots</summary>
+
+**Sources** — what gets crawled, and the controls to do it.
+
+![Sources tab](docs/sources.png)
+
+**Gradients** — the recipes themselves, with a preview of each.
+
+![Gradients tab](docs/gradients.png)
+
+**Summary** — the whole picture in numbers.
+
+![Summary tab](docs/summary.png)
+
+**Light theme** — toggled from the corner and remembered between visits.
+Add `?theme=light` to the address to force it.
+
+![Light theme](docs/light.png)
+
+</details>
+
+> Screenshots use made-up demo data, not a real project.
 
 ## What it does
 

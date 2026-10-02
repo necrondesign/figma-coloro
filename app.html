@@ -349,6 +349,10 @@ function applyTheme(light){
   try { localStorage.setItem('theme', light ? 'light' : 'dark'); } catch (e) { /* private window */ }
 }
 (function initTheme(){
+  // ?theme=light|dark в адресе перебивает всё: так можно прислать ссылку
+  // в нужной теме и снимать скриншоты без ручного переключения.
+  const forced = new URLSearchParams(location.search).get('theme');
+  if (forced === 'light' || forced === 'dark') { applyTheme(forced === 'light'); return; }
   let light = false;
   try {
     const saved = localStorage.getItem('theme');
