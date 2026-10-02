@@ -8,34 +8,53 @@ product*, *how many of them have no token behind them*, and *where to find them*
 
 [Русская версия](README.ru.md)
 
+## What it looks like
+
+**Colors** — every colour that is actually used, sorted by how often. Each row
+shows how much of that is a fill, how much is a gradient stop, how much was set
+by hand with no variable or style behind it, and which kit token carries the
+same value.
+
 ![Colors tab](docs/colors.png)
 
-*Every colour, how often it is applied, how much of that is set by hand, and
-which token carries the same value. Click a row to get links to the layers.*
+**Where each colour lives** — click a row and it opens the files and pages that
+use it, with a direct link per layer. Clicking a link opens Figma with that layer
+selected.
 
-<details>
-<summary>More screenshots</summary>
+![An expanded colour row with links to layers](docs/links.png)
 
-**Sources** — what gets crawled, and the controls to do it.
+**Gradient colors** — the colours that appear as gradient stops. A colour used
+both ways shows up here and in Colors, and the description says so.
 
-![Sources tab](docs/sources.png)
+![Gradient colors tab](docs/gradcolors.png)
 
-**Gradients** — the recipes themselves, with a preview of each.
+**Gradients** — the recipes themselves: the stops, the type, how often each is
+used and in how many files.
 
 ![Gradients tab](docs/gradients.png)
 
-**Summary** — the whole picture in numbers.
+**Tokens** — your kit's colour tokens against reality: which ones appear in the
+designs, which never do, and how many times each value is used.
+
+![Tokens tab](docs/tokens.png)
+
+**Summary** — the whole picture in numbers, including how much of the work is
+colour set by hand.
 
 ![Summary tab](docs/summary.png)
+
+**Sources** — what gets crawled. Add a link, rescan one source or all of them,
+choose how many files to crawl in parallel, export a shareable report.
+
+![Sources tab](docs/sources.png)
 
 **Light theme** — toggled from the corner and remembered between visits.
 Add `?theme=light` to the address to force it.
 
 ![Light theme](docs/light.png)
 
-</details>
-
-> Screenshots use made-up demo data, not a real project.
+> Screenshots use made-up demo data, not a real project. Run `python3 demo/seed.py`
+> to get the same thing locally.
 
 ## What it does
 
