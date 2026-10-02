@@ -320,6 +320,8 @@ $('#tabs').innerHTML = TABS.map(([id,l]) =>
 $('#tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) show(b.dataset.t); });
 function show(t){
   tab = t;
+  // Адрес отражает вкладку: ссылку можно переслать, обновление страницы не сбрасывает её.
+  if (location.hash.slice(1) !== t) history.replaceState(null, '', '#' + t);
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'p' + '-' + t));
   // Срез по страницам режет данные, а не настройки — на вкладке источников он лишний.
@@ -376,9 +378,9 @@ function renderSummary(){
       <tr><td>Unique colors</td><td class="r">${num(st.colors)}</td></tr>
       <tr><td>In fills and strokes</td><td class="r">${num(st.flatOnly + st.both)}</td></tr>
       <tr><td>In gradients</td><td class="r">${num(st.gradOnly + st.both)}</td></tr>
-      <tr><td style="padding-left:20px;opacity:.75">fills only</td><td class="r">${num(st.flatOnly)}</td></tr>
-      <tr><td style="padding-left:20px;opacity:.75">gradients only</td><td class="r">${num(st.gradOnly)}</td></tr>
-      <tr><td style="padding-left:20px;opacity:.75">both</td><td class="r">${num(st.both)}</td></tr>
+      <tr><td>Only in fills</td><td class="r">${num(st.flatOnly)}</td></tr>
+      <tr><td>Only in gradients</td><td class="r">${num(st.gradOnly)}</td></tr>
+      <tr><td>In both</td><td class="r">${num(st.both)}</td></tr>
       <tr><td>Matching a token value</td><td class="r">${num(st.withToken)}</td></tr>
       <tr><td>Used 10 times or fewer</td><td class="r">${num(st.rare)}</td></tr>
     </tbody></table>
@@ -665,12 +667,15 @@ async function poll(){
     document.querySelector('#p-sources').remove();
     const pf = document.querySelector('#pagefilter');
     if (pf) pf.closest('.row1').remove();
-    await loadData(); show('summary');
+    await loadData();
+    const w = location.hash.slice(1);
+    show(TABS.some(([id]) => id === w) && w !== 'sources' ? w : 'summary');
     return;
   }
   await loadData();
-  // Пустая установка открывается на источниках: там первое действие.
-  show(D.stats.files ? 'summary' : 'sources');
+  // Вкладка из адреса, иначе по состоянию: пустая установка открывается на источниках.
+  const want = location.hash.slice(1);
+  show(TABS.some(([id]) => id === want) ? want : (D.stats.files ? 'summary' : 'sources'));
   await poll(); setInterval(poll, 2500);
 })();
 </script>
