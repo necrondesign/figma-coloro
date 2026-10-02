@@ -18,11 +18,13 @@ FILES=(
   "publish.sh"
 )
 # Папки целиком (скриншоты для README).
-DIRS=( "docs" )
+DIRS=( "docs" "demo" )
 
 printf '\033[1mCollecting a clean copy\033[0m\n'
-rm -rf "$DST"
 mkdir -p "$DST"
+# Чистим содержимое, но НЕ трогаем .git: иначе при каждой пересборке
+# терялись бы история и настройка remote.
+find "$DST" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 for f in "${FILES[@]}"; do
   if [ -e "$SRC/$f" ]; then
     cp "$SRC/$f" "$DST/$f"

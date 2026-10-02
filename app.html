@@ -69,6 +69,27 @@ h2{font-size:13px;font-weight:600;margin:24px 0 8px;color:var(--txt)}
 .tab:hover{color:var(--txt)}
 .tab.on{background:var(--bg);color:var(--txt);font-weight:600;box-shadow:var(--shadow)}
 .page{display:none}.page.on{display:block}
+/* Первый элемент раздела не должен добавлять свой верхний отступ:
+   иначе разделы начинаются на разной высоте и контент прыгает. */
+.page > :first-child{margin-top:0}
+
+/* Вторая полоса существует всегда, даже когда пустая: её высота зарезервирована,
+   поэтому при переключении верхних вкладок содержимое ниже не сдвигается. */
+.bar2{display:flex;gap:10px;align-items:center;flex-wrap:nowrap;
+  min-height:34px;margin-bottom:12px}
+.tabs.sub{background:none;padding:0;margin:0;flex:none;gap:2px}
+.tabs.sub .tab{font-size:11.5px;padding:5px 10px}
+.tabs.sub .tab.on{background:var(--btn);box-shadow:none}
+.pf{display:flex;gap:6px;align-items:center;flex:1;min-width:0}
+.pf input{flex:1;min-width:120px}
+.pf .note{margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Скрываем видимостью, а не display: место под фильтр остаётся занятым. */
+.bar2.nofilter .pf{visibility:hidden;pointer-events:none}
+
+/* Полоса групп и строка счётчика держат высоту: без этого перенос чипов
+   на вторую строку дёргал бы весь список. */
+.chips{min-height:26px;align-content:flex-start}
+.cnt{min-height:17px}
 
 input[type=search],input[type=text],select{
   background:var(--btn);border:1px solid transparent;color:var(--txt);
@@ -184,16 +205,18 @@ tbody tr:hover td{background:var(--btn)}
   <p class="sub" id="sub">Loading…</p>
   <div class="stats" id="stats"></div>
 
-  <div class="row1" style="margin:0 0 14px">
-    <input type="search" id="pagefilter" placeholder="Filter by page name — stage, chat, core…"
-           title="Limits every tab to pages whose name contains this text. Case-insensitive. Leave empty for all pages."
-           style="flex:1;min-width:240px">
-    <button class="b" id="pfapply">Apply</button>
-    <button class="b" id="pfreset">Reset</button>
-    <span class="note" id="pfnote" style="margin:0"></span>
-  </div>
-
   <div class="tabs" id="tabs"></div>
+
+  <div class="bar2" id="bar2">
+    <div class="tabs sub" id="subtabs"></div>
+    <div class="pf" id="pfbox">
+      <input type="search" id="pagefilter" placeholder="Filter by page name — stage, chat, core…"
+             title="Limits every tab to pages whose name contains this text. Case-insensitive. Leave empty for all pages.">
+      <button class="b" id="pfapply">Apply</button>
+      <button class="b" id="pfreset">Reset</button>
+      <span class="note" id="pfnote"></span>
+    </div>
+  </div>
 
   <div class="page" id="p-summary"></div>
 
@@ -221,7 +244,7 @@ tbody tr:hover td{background:var(--btn)}
     <div id="srclist"></div>
   </div>
 
-  <div class="page" id="p-colors">
+  <div class="page" id="p-fills">
     
     <div class="row1">
       <input type="search" id="q" placeholder="Search hex, token, file or page">
@@ -311,23 +334,52 @@ let D = null, S = null;
 // the Sources tab is removed and the crawl controls are not needed.
 const EMBEDDED = /*__DATA__*/ null;
 
-// Порядок по ходу работы: подключил источники → увидел итог → разобрал по частям → сверил с китом.
-const TABS = [['sources','Sources'],['summary','Summary'],['colors','Colors'],
-              ['gradcolors','Gradient colors'],['grads','Gradients'],['tokens','Tokens']];
-let tab = 'summary';
-$('#tabs').innerHTML = TABS.map(([id,l]) =>
-  `<button class="tab" data-t="${id}" data-label="${l}"><span>${l}</span></button>`).join('');
-$('#tabs').addEventListener('click', e => { const b = e.target.closest('.tab'); if (b) show(b.dataset.t); });
-function show(t){
-  tab = t;
-  // Адрес отражает вкладку: ссылку можно переслать, обновление страницы не сбрасывает её.
-  if (location.hash.slice(1) !== t) history.replaceState(null, '', '#' + t);
-  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.t === t));
-  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'p' + '-' + t));
-  // Срез по страницам режет данные, а не настройки — на вкладке источников он лишний.
-  const pf = $('#pagefilter').closest('.row1');
-  if (pf) pf.style.display = (t === 'sources') ? 'none' : '';
+// Два уровня. Сверху — откуда берём, что смотрим, и аналитика.
+// Снизу — разрезы внутри верхнего раздела.
+const TOP = [['sources','Sources'], ['colors','Colors'], ['analytics','Analytics']];
+const SUB = {
+  sources:   [],
+  colors:    [['fills','Fills'], ['gradcolors','Gradient colors'], ['grads','Gradients']],
+  analytics: [['summary','Summary'], ['tokens','Tokens']],
+};
+// Какому верхнему разделу принадлежит каждая страница.
+const PARENT = {};
+for (const [top, subs] of Object.entries(SUB)) {
+  if (!subs.length) PARENT[top] = top;
+  for (const [id] of subs) PARENT[id] = top;
 }
+// На каких страницах срез по страницам имеет смысл.
+const FILTERABLE = new Set(['fills','gradcolors','grads','summary','tokens']);
+
+let page = 'sources';
+
+function renderTabs(){
+  $('#tabs').innerHTML = TOP.map(([id,l]) =>
+    `<button class="tab" data-top="${id}" data-label="${l}"><span>${l}</span></button>`).join('');
+}
+renderTabs();
+
+function show(p){
+  const top = PARENT[p] || 'sources';
+  page = p;
+  document.querySelectorAll('#tabs .tab').forEach(b => b.classList.toggle('on', b.dataset.top === top));
+  $('#subtabs').innerHTML = SUB[top].map(([id,l]) =>
+    `<button class="tab" data-p="${id}" data-label="${l}"><span>${l}</span></button>`).join('');
+  document.querySelectorAll('#subtabs .tab').forEach(b => b.classList.toggle('on', b.dataset.p === p));
+  document.querySelectorAll('.page').forEach(el => el.classList.toggle('on', el.id === 'p-' + p));
+  $('#bar2').classList.toggle('nofilter', !FILTERABLE.has(p));
+  // Адрес отражает страницу: ссылку можно переслать, обновление её не сбрасывает.
+  if (location.hash.slice(1) !== p) history.replaceState(null, '', '#' + p);
+}
+
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tab'); if (!b) return;
+  const top = b.dataset.top;
+  show(SUB[top].length ? SUB[top][0][0] : top);   // верхняя вкладка открывает свой первый разрез
+});
+$('#subtabs').addEventListener('click', e => {
+  const b = e.target.closest('.tab'); if (b) show(b.dataset.p);
+});
 
 async function api(path, body){
   const o = body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {};
@@ -663,19 +715,20 @@ async function poll(){
 (async () => {
   if (EMBEDDED) {
     // Shareable report: no sources, no crawling — data only.
-    document.querySelector('[data-t="sources"]').remove();
-    document.querySelector('#p-sources').remove();
-    const pf = document.querySelector('#pagefilter');
-    if (pf) pf.closest('.row1').remove();
+    // Источников и обхода в пересылаемом отчёте нет, срез по страницам тоже не нужен.
+    TOP.splice(TOP.findIndex(t => t[0] === 'sources'), 1);
+    delete SUB.sources; delete PARENT.sources;
+    renderTabs();
+    const box = document.querySelector('#p-sources'); if (box) box.remove();
+    const pf = document.querySelector('#pfbox'); if (pf) pf.remove();
     await loadData();
     const w = location.hash.slice(1);
-    show(TABS.some(([id]) => id === w) && w !== 'sources' ? w : 'summary');
+    show(PARENT[w] ? w : 'fills');
     return;
   }
   await loadData();
-  // Вкладка из адреса, иначе по состоянию: пустая установка открывается на источниках.
   const want = location.hash.slice(1);
-  show(TABS.some(([id]) => id === want) ? want : (D.stats.files ? 'summary' : 'sources'));
+  show(PARENT[want] ? want : (D.stats.files ? 'fills' : 'sources'));
   await poll(); setInterval(poll, 2500);
 })();
 </script>

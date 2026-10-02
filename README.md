@@ -8,25 +8,7 @@ product*, *how many of them have no token behind them*, and *where to find them*
 
 [Русская версия](README.ru.md)
 
-![Colors tab](docs/colors.png)
-
-*Every colour, how often it is applied, how much of that is set by hand, and
-which token carries the same value. Click a row to get links to the layers.*
-
-<details>
-<summary>More screenshots</summary>
-
-**Gradients** — the recipes themselves, with a preview of each.
-
-![Gradients tab](docs/gradients.png)
-
-**Summary** — the whole picture in numbers.
-
-![Summary tab](docs/summary.png)
-
-</details>
-
-> Screenshots use made-up demo data, not a real project.
+![tabs: Summary, Sources, Colors, Gradient colors, Gradients, Tokens](docs/screenshot.png)
 
 ## What it does
 
@@ -77,6 +59,15 @@ It is read from the first place that has it:
 3. `~/.config/figma-colors/token`.
 
 `token.txt` is in `.gitignore` — it will not be committed.
+
+## Try it without Figma
+
+```bash
+python3 demo/seed.py && python3 app.py
+```
+
+That fills `out/` with made-up files, pages and colours so you can click through
+the whole app before pointing it at anything real. Delete `out/` to start clean.
 
 ## Use
 
