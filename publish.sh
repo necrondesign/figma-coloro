@@ -17,6 +17,8 @@ FILES=(
   "Color Inventory.command"
   "publish.sh"
 )
+# Папки целиком (скриншоты для README).
+DIRS=( "docs" )
 
 printf '\033[1mCollecting a clean copy\033[0m\n'
 rm -rf "$DST"
@@ -27,6 +29,12 @@ for f in "${FILES[@]}"; do
     printf '  + %s\n' "$f"
   else
     printf '  \033[33m? missing: %s\033[0m\n' "$f"
+  fi
+done
+for d in "${DIRS[@]}"; do
+  if [ -d "$SRC/$d" ]; then
+    cp -R "$SRC/$d" "$DST/$d"
+    printf '  + %s/\n' "$d"
   fi
 done
 
