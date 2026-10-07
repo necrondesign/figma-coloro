@@ -14,7 +14,7 @@ from pathlib import Path
 
 # Формат данных. Поднимается, когда меняется то, что извлекается из макета:
 # файлы, загруженные в старом формате, при следующем обновлении перезагружаются.
-FORMAT = 1
+FORMAT = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
@@ -50,11 +50,14 @@ CREATE TABLE IF NOT EXISTS pages (
 --   pinst — ближайший родитель-инстанс
 --   x, y, w, h — рамка на холсте в десятых долях пикселя
 --   first_seen — когда слой впервые появился в базе (переживает перезагрузку)
+--   screen — экран, в который входит слой: самый внешний кадр под страницей
+--   anchor — ближайший слой, на который открывается ссылка Figma (у слоёв внутри
+--            инстанса id составной, и ссылка на них не работает — ведём на инстанс)
 CREATE TABLE IF NOT EXISTS nodes (
     file_key TEXT, page_id TEXT, id TEXT, parent_id TEXT, type TEXT, name TEXT,
     hid INTEGER, sect INTEGER, pinst TEXT, comp TEXT, text TEXT,
     x INTEGER, y INTEGER, w INTEGER, h INTEGER,
-    font INTEGER, tstyle INTEGER, first_seen TEXT,
+    font INTEGER, tstyle INTEGER, first_seen TEXT, screen TEXT, anchor TEXT,
     PRIMARY KEY (file_key, id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS nodes_page ON nodes (file_key, page_id);
@@ -73,8 +76,21 @@ CREATE TABLE IF NOT EXISTS paints (
     color TEXT, alpha INTEGER, src TEXT, grad INTEGER
 );
 CREATE INDEX IF NOT EXISTS paints_page ON paints (file_key, page_id);
+-- Краска по слою: без него каждый запрос с фильтром по слоям перебирал бы все краски файла
+-- на каждый слой — на 259 тысячах слоёв это минуты вместо долей секунды.
+CREATE INDEX IF NOT EXISTS paints_node ON paints (file_key, node_id);
 CREATE INDEX IF NOT EXISTS paints_color ON paints (color);
+
+-- Итоговые числа после каждого обновления: из них стрелки «стало лучше или хуже».
+CREATE TABLE IF NOT EXISTS snapshots (
+    taken_at TEXT, file_key TEXT, metrics TEXT,
+    PRIMARY KEY (taken_at, file_key)
+) WITHOUT ROWID;
 """
+
+# Колонки, добавленные после первого формата: в старой базе их дописываем, а сами данные
+# обновятся при следующей загрузке — формат поднят, и файлы перезагрузятся.
+_ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"))}
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -87,6 +103,11 @@ def connect(path: str | Path) -> sqlite3.Connection:
     con.execute("PRAGMA synchronous=NORMAL")
     con.execute("PRAGMA cache_size=-64000")
     con.executescript(SCHEMA)
+    for table, cols in _ADDED.items():
+        have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        for col, kind in cols:
+            if col not in have:
+                con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
     try:
         p.chmod(0o600)
     except OSError:

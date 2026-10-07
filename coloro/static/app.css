@@ -1,0 +1,211 @@
+/* coloro — дизайн-система Booster: те же переменные, радиусы и ритм.
+   Шрифт — из системы: инструмент локальный и не ходит за шрифтом в интернет. */
+
+:root{
+  --bg:#2c2c2c; --panel:#323232; --btn:#383838; --btn-hover:#444; --txt:#fff;
+  --icon:rgba(255,255,255,.85); --label:rgba(255,255,255,.55); --muted:rgba(255,255,255,.4);
+  --line:rgba(255,255,255,.10); --line-soft:rgba(255,255,255,.06);
+  --accent:#0c8ce9; --ok:#14ae5c; --warn:#ff8a1f; --bad:#f24822;
+  --good-bg:rgba(20,174,92,.20); --good-tx:#5ed492;
+  --fair-bg:rgba(255,138,31,.20); --fair-tx:#ffb067;
+  --bad-bg:rgba(242,72,34,.22);  --bad-tx:#ff8a6b;
+  --shadow:0 1px 3px rgba(0,0,0,.3); --shadow-lg:0 6px 16px rgba(0,0,0,.5);
+  --r:6px; --r-sm:5px; --r-xs:3px;
+}
+body.light, html.pre-light body{
+  --bg:#ffffff; --panel:#f7f7f7; --btn:#ebebeb; --btn-hover:#dedede; --txt:#1e1e1e;
+  --icon:rgba(0,0,0,.8); --label:rgba(0,0,0,.58); --muted:rgba(0,0,0,.42);
+  --line:rgba(0,0,0,.11); --line-soft:rgba(0,0,0,.06);
+  --good-bg:#dcf3e5; --good-tx:#0b6b38;
+  --fair-bg:#fdebd6; --fair-tx:#8a4b0a;
+  --bad-bg:#fde0d9;  --bad-tx:#9c2a10;
+  --shadow:0 1px 3px rgba(0,0,0,.12); --shadow-lg:0 6px 16px rgba(0,0,0,.18);
+}
+*{box-sizing:border-box}
+html{color-scheme:dark}
+body.light{color-scheme:light}
+body{
+  margin:0; background:var(--bg); color:var(--txt);
+  /* Цифры одной ширины: единица не уже девятки, столбцы чисел не гуляют. */
+  font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;
+  font-family:Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size:12px; line-height:1.45; -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 16px 72px}
+
+/* ── шапка ─────────────────────────────────────────── */
+.head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.brand{font-size:15px;font-weight:600;letter-spacing:-.01em;margin-right:4px}
+.nav{display:flex;gap:2px;background:var(--btn);border-radius:var(--r);padding:3px;flex-wrap:wrap}
+/* Активная вкладка отличается подложкой, а не начертанием: полужирный шире
+   и сдвигал бы соседей при каждом переключении. */
+.nav a{color:var(--label);padding:6px 11px;border-radius:var(--r-sm);font-size:11.5px;white-space:nowrap}
+.nav a:hover{color:var(--txt);text-decoration:none}
+.nav a.on{background:var(--bg);color:var(--txt);box-shadow:var(--shadow)}
+.grow{flex:1}
+.job{display:flex;align-items:center;gap:8px;color:var(--label);font-size:11px;min-height:28px}
+.ic{width:28px;height:28px;border:none;border-radius:var(--r);background:var(--btn);color:var(--icon);
+  cursor:pointer;display:grid;place-items:center;flex:none}
+.ic:hover{background:var(--btn-hover)}
+.ic svg{width:16px;height:16px}
+
+/* ── полоса фильтров ───────────────────────────────── */
+.filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-height:30px;margin-bottom:14px}
+/* Своё display:flex перебивает атрибут hidden — без этого полоса видна на всех экранах. */
+.filters[hidden]{display:none}
+.filters .lbl{color:var(--muted);font-size:11px;margin-right:2px}
+.chip{border:1px solid transparent;background:var(--btn);color:var(--label);border-radius:var(--r-sm);
+  padding:5px 9px;font:inherit;font-size:11px;cursor:pointer;user-select:none;display:inline-flex;
+  align-items:center;gap:5px;white-space:nowrap}
+.chip:hover{background:var(--btn-hover);color:var(--txt)}
+.chip.on{background:var(--accent);color:#fff}
+/* Поле внутри чипа не должно раздувать его: общее правило для полей тут не действует. */
+.filters .chip input{background:transparent;border:none;color:inherit;font:inherit;width:110px;outline:none;padding:0;height:16px;line-height:16px}
+.chip input::placeholder{color:var(--muted)}
+.chip.reset{background:none;color:var(--muted)}
+
+/* ── кнопки и поля ─────────────────────────────────── */
+input[type=text],input[type=url],input[type=password],input[type=date],select{
+  background:var(--btn);border:1px solid transparent;color:var(--txt);border-radius:var(--r-sm);
+  padding:7px 10px;font:inherit;font-size:11.5px;outline:none}
+input::placeholder{color:var(--muted)}
+input:focus,select:focus{border-color:var(--accent)}
+.b{border:none;background:var(--btn);color:var(--txt);border-radius:var(--r-sm);padding:7px 11px;
+  font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.b:hover:not(:disabled){background:var(--btn-hover)}
+.b:disabled{opacity:.4;cursor:default}
+.b.main{background:var(--accent);color:#fff}
+.b.main:hover:not(:disabled){filter:brightness(1.08)}
+.b.quiet{background:none;color:var(--label)}
+input[type=file]{color:var(--label);font:inherit;font-size:11.5px}
+input[type=file]::file-selector-button{border:none;background:var(--btn);color:var(--txt);border-radius:var(--r-sm);
+  padding:7px 11px;font:inherit;font-size:11.5px;cursor:pointer;margin-right:10px}
+input[type=file]::file-selector-button:hover{background:var(--btn-hover)}
+.b.quiet:hover:not(:disabled){color:var(--txt);background:var(--btn)}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.row > input[type=text],.row > input[type=url]{flex:1;min-width:220px}
+
+/* ── заголовки и подписи ───────────────────────────── */
+h2{font-size:13px;font-weight:600;margin:22px 0 8px}
+h2:first-child{margin-top:0}
+.sub{color:var(--label);font-size:11px;margin:-4px 0 12px}
+.muted{color:var(--muted)}
+.label{color:var(--label)}
+.num{text-align:right;white-space:nowrap}
+
+/* ── задачи на главном экране ──────────────────────── */
+.tasks{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:16px}
+.task{background:var(--btn);border-radius:var(--r);padding:11px 12px;cursor:pointer;border:1px solid transparent}
+.task:hover{background:var(--btn-hover)}
+.task b{display:block;font-size:12.5px;font-weight:600;margin-bottom:2px}
+.task span{color:var(--label);font-size:11px}
+.task .n{color:var(--txt);font-size:18px;font-weight:600;letter-spacing:-.01em;display:block;margin:3px 0 1px}
+
+/* ── плитки сводки ─────────────────────────────────── */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:18px}
+.tile{background:var(--panel);border-radius:var(--r);padding:10px 12px;min-height:76px}
+.tile .t{color:var(--label);font-size:11px}
+.tile .v{font-size:20px;font-weight:600;letter-spacing:-.01em;margin:2px 0}
+.tile .d{font-size:11px;min-height:16px}
+.up-good,.down-good{color:var(--good-tx)} .up-bad,.down-bad{color:var(--bad-tx)}
+
+/* ── карта «файлы × проблемы» ──────────────────────── */
+.map{width:100%;border-collapse:separate;border-spacing:3px;table-layout:fixed}
+.map th{font-weight:400;color:var(--label);font-size:11px;padding:4px 6px;text-align:center}
+.map th:first-child{text-align:left}
+.map td{padding:7px 6px;text-align:center;border-radius:var(--r-xs);font-size:12px}
+.map td.file{text-align:left;background:none;padding-left:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.map td.file small{display:block;color:var(--muted);font-size:10.5px}
+.map td.cell{cursor:pointer}
+.map td.cell:hover{outline:1px solid var(--line)}
+.lv-good{background:var(--good-bg);color:var(--good-tx)}
+.lv-fair{background:var(--fair-bg);color:var(--fair-tx)}
+.lv-bad{background:var(--bad-bg);color:var(--bad-tx)}
+.lv-none{background:var(--panel);color:var(--muted)}
+.legend{display:flex;gap:12px;color:var(--label);font-size:11px;margin:6px 0 0;flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+/* ── список цветов ─────────────────────────────────── */
+.cats{display:flex;gap:2px;background:var(--btn);border-radius:var(--r);padding:3px;margin-bottom:10px;flex-wrap:wrap;width:max-content;max-width:100%}
+.cats button{border:none;background:none;color:var(--label);font:inherit;font-size:11.5px;padding:6px 10px;
+  border-radius:var(--r-sm);cursor:pointer;white-space:nowrap}
+.cats button:hover{color:var(--txt)}
+.cats button.on{background:var(--bg);color:var(--txt);box-shadow:var(--shadow)}
+.cats button em{font-style:normal;color:var(--muted);margin-left:4px}
+.hint{color:var(--label);font-size:11px;margin:0 0 10px;min-height:16px}
+
+.colours{display:flex;flex-direction:column;gap:2px}
+.crow{display:grid;grid-template-columns:30px minmax(0,1.1fr) 90px 80px 70px minmax(0,1.6fr);gap:10px;
+  align-items:center;padding:7px 8px;border-radius:var(--r-sm);cursor:pointer}
+.crow:hover{background:var(--btn)}
+.crow.open{background:var(--btn)}
+.sw{width:30px;height:30px;border-radius:var(--r-sm);border:1px solid var(--line);
+  background-image:linear-gradient(45deg,#8883 25%,transparent 25%),linear-gradient(-45deg,#8883 25%,transparent 25%),
+  linear-gradient(45deg,transparent 75%,#8883 75%),linear-gradient(-45deg,transparent 75%,#8883 75%);
+  background-size:8px 8px;background-position:0 0,0 4px,4px -4px,-4px 0;position:relative;overflow:hidden}
+.sw i{position:absolute;inset:0}
+.crow .name{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crow .name small{display:block;font-weight:400;color:var(--muted);font-size:10.5px}
+.crow .what{color:var(--label);font-size:11px;overflow:hidden;text-overflow:ellipsis}
+.crow .what b{color:var(--txt);font-weight:500}
+.tag{display:inline-block;border-radius:var(--r-xs);padding:1px 6px;font-size:10.5px;margin-right:4px}
+.tag.near{background:var(--fair-bg);color:var(--fair-tx)}
+.tag.off{background:var(--bad-bg);color:var(--bad-tx)}
+.tag.alpha{background:var(--fair-bg);color:var(--fair-tx)}
+.tag.unbound{background:var(--fair-bg);color:var(--fair-tx)}
+.tag.token{background:var(--good-bg);color:var(--good-tx)}
+
+.places{margin:2px 0 10px 48px;border-left:1px solid var(--line);padding-left:12px}
+.places-head{color:var(--label);font-size:11px;padding:2px 0 6px}
+.scr{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) auto;gap:10px;align-items:center;
+  padding:6px 6px;border-radius:var(--r-xs);cursor:pointer;font-size:11.5px}
+.scr:hover,.scr.open{background:var(--btn)}
+.scr .path,.scr .cnt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scr .path .label{margin:0 4px}
+.scr .cnt{color:var(--label)}
+.layers{margin:0 0 6px 14px;border-left:1px solid var(--line);padding-left:10px}
+.place{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:5px 0;
+  border-bottom:1px solid var(--line-soft);font-size:11.5px}
+.place .path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.place .path .label{margin:0 4px}
+.place code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;background:var(--btn);
+  padding:1px 5px;border-radius:var(--r-xs)}
+.place .when{color:var(--muted);font-size:10.5px;margin-left:6px}
+
+/* ── источники ─────────────────────────────────────── */
+.src{background:var(--panel);border-radius:var(--r);padding:10px 12px;margin-bottom:6px}
+.src .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.src .top b{font-size:12.5px;font-weight:600}
+.src .meta{color:var(--label);font-size:11px;margin-top:3px}
+.src .pages{margin-top:6px;display:flex;gap:4px;flex-wrap:wrap}
+.pg{font-size:10.5px;padding:2px 7px;border-radius:var(--r-xs);background:var(--btn);color:var(--label)}
+.pg.failed{background:var(--bad-bg);color:var(--bad-tx)}
+.pg.archived{text-decoration:line-through;opacity:.7}
+.bar{height:3px;background:var(--btn);border-radius:2px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
+
+/* ── пустые состояния и сообщения ──────────────────── */
+.empty{background:var(--panel);border-radius:var(--r);padding:26px 20px;text-align:center}
+.empty b{display:block;font-size:13px;margin-bottom:4px}
+.empty p{color:var(--label);margin:0 0 12px}
+.notice{background:var(--fair-bg);color:var(--fair-tx);border-radius:var(--r);padding:9px 12px;margin-bottom:14px;font-size:11.5px}
+.notice a{color:inherit;text-decoration:underline}
+.error{background:var(--bad-bg);color:var(--bad-tx);border-radius:var(--r);padding:9px 12px;margin-bottom:14px;font-size:11.5px}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--txt);color:var(--bg);
+  padding:8px 14px;border-radius:var(--r);font-size:11.5px;box-shadow:var(--shadow-lg);opacity:0;
+  transition:opacity .15s;pointer-events:none;max-width:90vw}
+.toast.show{opacity:1}
+.loading{color:var(--muted);padding:20px 0}
+
+/* ── узкое окно: половина экрана рядом с Figma ─────── */
+@media (max-width:760px){
+  .crow{grid-template-columns:30px minmax(0,1fr) 70px;}
+  .crow .c-files,.crow .c-screens,.crow .what{display:none}
+  .places{margin-left:12px}
+  .scr{grid-template-columns:minmax(0,1fr) auto}
+  .scr .cnt{display:none}
+  .map{table-layout:auto}
+  .map-wrap{overflow-x:auto}
+}

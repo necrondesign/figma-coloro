@@ -14,6 +14,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+# Что считается экраном: самый внешний кадр под страницей. Секции и группы — это
+# контейнеры, в которых экраны лежат, сами они экранами не считаются.
+SCREEN_TYPES = ("FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE")
+
+
+def plain_id(nid: str) -> bool:
+    """Обычный id слоя, на который ведёт ссылка Figma. У слоёв внутри инстанса id составной
+    (I4041:9063;3233:43784), и ссылка на такой слой не открывается."""
+    return bool(nid) and ";" not in nid and not nid.startswith("I")
+
+
 @dataclass
 class Ctx:
     file_key: str
@@ -22,6 +33,8 @@ class Ctx:
     hidden: bool = False                       # скрыт кто-то из родителей
     sections: tuple[str, ...] = ()             # секции над поддеревом, снаружи внутрь
     pinst: str | None = None                   # ближайший родитель-инстанс
+    screen: str | None = None                  # экран, в который входит поддерево
+    anchor: str | None = None                  # ближайший предок, на которого ведёт ссылка
 
 
 @dataclass
@@ -119,13 +132,17 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
 
     children=False — записать только сам узел: его детей загрузчик скачает отдельно.
     """
-    stack = [(root, ctx.parent_id, ctx.hidden, ctx.sections, ctx.pinst)]
+    stack = [(root, ctx.parent_id, ctx.hidden, ctx.sections, ctx.pinst, ctx.screen, ctx.anchor)]
     while stack:
-        node, parent, hidden_above, sections, pinst = stack.pop()
+        node, parent, hidden_above, sections, pinst, screen, anchor = stack.pop()
         nid = node.get("id") or ""
         ntype = node.get("type") or ""
         name = node.get("name") or ""
         hidden = hidden_above or node.get("visible") is False
+        if screen is None and ntype in SCREEN_TYPES:
+            screen = nid
+        if plain_id(nid):
+            anchor = nid
         box = node.get("absoluteBoundingBox") or {}
         st = node.get("styles") or {}
         is_text = ntype == "TEXT"
@@ -140,6 +157,7 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
             intern(_font(node)) if is_text else None,
             intern(_style_name(styles, st.get("text"))) if is_text and st.get("text") else None,
             first_seen.get(nid) or now,
+            screen, anchor,
         ))
         for p in paints_of(node, styles, intern):
             out.paints.append((ctx.file_key, ctx.page_id, nid, *p))
@@ -150,15 +168,18 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
             child_sections = sections + (name,) if ntype == "SECTION" else sections
             child_pinst = nid if ntype == "INSTANCE" else pinst
             for kid in reversed(kids):
-                stack.append((kid, nid, hidden, child_sections, child_pinst))
+                stack.append((kid, nid, hidden, child_sections, child_pinst, screen, anchor))
 
 
 def child_ctx(node: dict, ctx: Ctx) -> Ctx:
     """Контекст для детей узла, когда дети скачиваются отдельно от него."""
     ntype = node.get("type") or ""
+    nid = node.get("id") or ""
     return Ctx(
-        file_key=ctx.file_key, page_id=ctx.page_id, parent_id=node.get("id"),
+        file_key=ctx.file_key, page_id=ctx.page_id, parent_id=nid,
         hidden=ctx.hidden or node.get("visible") is False,
         sections=ctx.sections + ((node.get("name") or ""),) if ntype == "SECTION" else ctx.sections,
-        pinst=node.get("id") if ntype == "INSTANCE" else ctx.pinst,
+        pinst=nid if ntype == "INSTANCE" else ctx.pinst,
+        screen=ctx.screen or (nid if ntype in SCREEN_TYPES else None),
+        anchor=nid if plain_id(nid) else ctx.anchor,
     )

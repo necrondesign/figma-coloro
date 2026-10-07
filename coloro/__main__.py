@@ -2,6 +2,7 @@
 
   load <ссылка> [--pages stage,...] [--db путь] [--force]   загрузить файл
   stats [--db путь] [--pages stage] [--with-hidden] [--with-archive]   сводка по цветам
+  serve [--db путь] [--port 8800] [--no-browser]   открыть coloro в браузере
 """
 
 from __future__ import annotations
@@ -111,6 +112,12 @@ def cmd_stats(a) -> None:
         print(f"  {k:<24} {v:>10,}".replace(",", " "))
 
 
+def cmd_serve(a) -> None:
+    from . import server
+    server.DB_PATH = Path(a.db)
+    server.serve(a.port, open_browser=not a.no_browser)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="coloro")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -126,6 +133,11 @@ def main() -> None:
     s.add_argument("--with-hidden", action="store_true")
     s.add_argument("--with-archive", action="store_true")
     s.set_defaults(fn=cmd_stats)
+    v = sub.add_parser("serve")
+    v.add_argument("--db", default=str(DEFAULT_DB))
+    v.add_argument("--port", type=int, default=8800)
+    v.add_argument("--no-browser", action="store_true")
+    v.set_defaults(fn=cmd_serve)
     a = ap.parse_args()
     a.fn(a)
 

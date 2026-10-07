@@ -30,7 +30,7 @@ from .walk import Ctx, Out, child_ctx, walk
 BATCH = 8          # верхних слоёв страницы в одном запросе
 MAX_DEPTH = 40     # насколько глубоко можно раскрывать один слой, если он не скачивается целиком
 
-NODE_COLS = 18
+NODE_COLS = 20
 PAINT_COLS = 9
 
 
@@ -174,6 +174,10 @@ def load_file(con, figma: Figma, key: str, page_patterns=None, force: bool = Fal
     if report["status"] == "ok":
         with con:
             con.execute("UPDATE files SET loaded_at = ?, format = ? WHERE file_key = ?", (now, dbm.FORMAT, key))
+    if report["pages_loaded"]:
+        # Статистика для планировщика запросов: без неё SQLite выбирает порядок соединения
+        # таблиц вслепую и на больших базах может ошибиться на порядки.
+        con.execute("ANALYZE")
     if not todo and report["status"] == "ok":
         report["status"] = "unchanged"
     report["seconds"] = round(time.monotonic() - t0, 1)
