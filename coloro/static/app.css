@@ -212,6 +212,8 @@ h2:first-child{margin-top:0}
 .pg{font-size:10.5px;padding:2px 7px;border-radius:var(--r-xs);background:var(--btn);color:var(--label)}
 .pg.failed{background:var(--bad-bg);color:var(--bad-tx)}
 .pg.archived{text-decoration:line-through;opacity:.7}
+.topbar{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.tile svg{display:block;margin-top:6px}
 .bar{height:3px;background:var(--btn);border-radius:2px;overflow:hidden;margin-top:6px}
 .bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
 

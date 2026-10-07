@@ -173,17 +173,32 @@ def _overview(con, filt: Filter, idx: Index) -> dict:
 
 # ---------------------------------------------------------------- история
 
-def snapshot(con, idx: Index) -> str:
-    """Записывает числа по каждому файлу при фильтрах по умолчанию. Вызывается после обновления."""
+def snapshot(con, idx: Index) -> str | None:
+    """Записывает числа по каждому файлу при фильтрах по умолчанию. Вызывается после обновления.
+
+    Только если что-то поменялось: иначе история копит одинаковые точки, а стрелки сравнивают
+    с прошлым запуском, а не с прошлым изменением. Возвращает время снимка или None."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     data = overview(con, Filter(), idx)
+    rows = {f["file_key"]: {k: v for k, v in f["metrics"].items() if k != "levels"} for f in data["files"]}
+    rows["*"] = {k: v for k, v in data["totals"].items() if k != "levels"}
+    last = con.execute("SELECT MAX(taken_at) FROM snapshots").fetchone()[0]
+    if last:
+        prev = {fk: json.loads(m) for fk, m in con.execute(
+            "SELECT file_key, metrics FROM snapshots WHERE taken_at = ?", (last,))}
+        if prev == json.loads(json.dumps(rows)):
+            return None
     with dbm.writing(con):
-        for f in data["files"]:
-            m = {k: v for k, v in f["metrics"].items() if k != "levels"}
-            con.execute("INSERT OR REPLACE INTO snapshots VALUES (?, ?, ?)", (now, f["file_key"], json.dumps(m)))
-        tot = {k: v for k, v in data["totals"].items() if k != "levels"}
-        con.execute("INSERT OR REPLACE INTO snapshots VALUES (?, '*', ?)", (now, json.dumps(tot)))
+        for fk, m in rows.items():
+            con.execute("INSERT OR REPLACE INTO snapshots VALUES (?, ?, ?)", (now, fk, json.dumps(m)))
     return now
+
+
+def history(con, file_key: str = "*", limit: int = 200) -> list[dict]:
+    """Снимки по порядку — для графика «как менялось». file_key='*' — все файлы вместе."""
+    rows = con.execute("SELECT taken_at, metrics FROM snapshots WHERE file_key = ?"
+                       " ORDER BY taken_at DESC LIMIT ?", (file_key, limit)).fetchall()
+    return [{"taken_at": t, "metrics": json.loads(m)} for t, m in reversed(rows)]
 
 
 def _trend(con) -> dict | None:

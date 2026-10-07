@@ -119,11 +119,19 @@ class Stray(unittest.TestCase):
         self.assertIsNone(o["totals"]["stray"])
 
     def test_trend_from_snapshots(self):
-        health.snapshot(self.con, self.idx)
+        self.assertIsNotNone(health.snapshot(self.con, self.idx))
         self.assertIsNone(health.overview(self.con, Filter(), self.idx)["trend"])
         import time; time.sleep(1.1)
-        health.snapshot(self.con, self.idx)
-        self.assertIsNotNone(health.overview(self.con, Filter(), self.idx)["trend"])
+        # Ничего не поменялось — снимок не пишется, история не копит одинаковые точки.
+        self.assertIsNone(health.snapshot(self.con, self.idx))
+        self.assertEqual(len(health.history(self.con)), 1)
+        tree = [page("1:1", "Stage", [node("s9", "FRAME", children=[node("x", fills=[solid(0, 0, 1)])])])]
+        load_file(self.con, FakeFigma(tree), "K2")
+        self.assertIsNotNone(health.snapshot(self.con, self.idx))
+        trend = health.overview(self.con, Filter(), self.idx)["trend"]
+        self.assertEqual(trend["by_file"]["*"]["uses"], 1)
+        points = health.history(self.con)
+        self.assertEqual([p["metrics"]["uses"] for p in points], [4, 5])
 
 
 class FiltersOnPaints(unittest.TestCase):
@@ -185,6 +193,15 @@ class FiltersOnPaints(unittest.TestCase):
         tokens.store(self.con, tokens.parse("name,value\nred,#FF0000\n"), "t.csv")
         idx = tokens.load(self.con)
         self.assertEqual(health.overview(self.con, Filter(), idx)["totals"]["unbound"], 1)
+
+    def test_report_is_one_self_contained_page(self):
+        from coloro import report
+        html = report.build(self.con, Filter(), tokens.Index(tokens.parse("name,value\nred,#FF0000\n")))
+        self.assertTrue(html.startswith("<!DOCTYPE html>"))
+        self.assertNotIn("<script", html)                       # без скриптов и внешних файлов
+        self.assertNotIn("src=", html)
+        self.assertIn("Общая картина", html)
+        self.assertIn("https://www.figma.com/design/K1/", html)  # ссылки прямо на экраны
 
     def test_overview_matches_list(self):
         o = health.overview(self.con, Filter(), tokens.Index([]))

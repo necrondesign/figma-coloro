@@ -90,6 +90,8 @@ class Search(unittest.TestCase):
         self.assertEqual(button["instances"], 2)
         self.assertEqual(button["overridden"], 1)
         self.assertEqual(button["variants"]["Size"], {"B": 1, "M": 1})
+        # Два варианта на одном экране — один экран, а не два.
+        self.assertEqual(button["screens"], 1)
         self.assertTrue(button["remote"])
 
     def test_search_by_set(self):

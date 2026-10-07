@@ -186,6 +186,7 @@ async function viewOverview(el, params, stale) {
       <div class="tile"><div class="t">Набрано вручную</div><div class="v">${fmt(t.raw)}</div><div class="d">${tr ? delta("raw", tr.raw) : `${pct(t.raw_pct)} применений`}</div></div>
       <div class="tile"><div class="t">Тексты без стиля</div><div class="v">${fmt(t.text_nostyle)}</div><div class="d">${tr ? delta("text_nostyle", tr.text_nostyle) : `${pct(t.text_nostyle_pct)} текстов`}</div></div>
     </div>
+    <div id="history"></div>
     <h2>Где хорошо и где плохо</h2>
     <p class="sub">${fmt(o.files.length)} ${plural(o.files.length, "файл", "файла", "файлов")} — сначала те, где хуже. Нажмите на ячейку, чтобы увидеть места.</p>
     <div class="map-wrap"><table class="map">
@@ -205,11 +206,60 @@ async function viewOverview(el, params, stale) {
     </table></div>
     <div class="legend"><span><i class="lv-good"></i>хорошо</span><span><i class="lv-fair"></i>есть что поправить</span><span><i class="lv-bad"></i>плохо</span>
       ${o.trend ? `<span class="muted">· стрелки — с обновления ${esc(day(o.trend.since))}</span>` : isDefault() ? "" : '<span class="muted">· стрелки изменений видны при фильтрах по умолчанию</span>'}</div>`;
+  el.insertAdjacentHTML("afterbegin", `<div class="topbar"><span class="muted">${fmt(o.files.length)} ${plural(o.files.length, "файл", "файла", "файлов")} · ${fmt(t.layers)} ${plural(t.layers, "слой", "слоя", "слоёв")}</span><span class="grow"></span>
+    <a class="b" id="export" href="/api/export${fq()}" download>Скачать отчёт</a></div>`);
+  $("#export").onclick = () => toast("Собираю отчёт — на больших базах это до 20 секунд");
+  drawHistory($("#history"));
   el.querySelectorAll(".task").forEach((c) => (c.onclick = () => (location.hash = `#/colours?cat=${c.dataset.cat}`)));
   el.querySelectorAll("td.cell").forEach((c) => (c.onclick = () => {
     filt.files = c.dataset.file; saveFilter();
     location.hash = c.dataset.href || `#/colours?cat=${c.dataset.cat}`;
   }));
+}
+
+/* ───────────────────── история ───────────────────── */
+
+// Показатели для графика: что, как подписать, проценты ли, лучше ли меньше.
+const HISTORY = [
+  { key: "bound_pct", title: "Цвета из системы", pct: true, up: true },
+  { key: "stray", title: "Левые цвета" },
+  { key: "raw_pct", title: "Цвет вручную", pct: true },
+  { key: "text_nostyle_pct", title: "Тексты без стиля", pct: true },
+  { key: "scale_off_pct", title: "Мимо шкалы", pct: true },
+  { key: "generic", title: "Безымянные" },
+];
+
+function spark(values, good) {
+  const w = 220, h = 44, pad = 4;
+  const nums = values.filter((v) => v != null);
+  if (nums.length < 2) return "";
+  const lo = Math.min(...nums), hi = Math.max(...nums), span = hi - lo || 1;
+  const pts = values.map((v, i) => v == null ? null : [pad + (i * (w - 2 * pad)) / (values.length - 1), h - pad - ((v - lo) * (h - 2 * pad)) / span]).filter(Boolean);
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
+  const last = pts[pts.length - 1];
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" aria-hidden="true"><path d="${line}" fill="none" stroke="var(--${good ? "good" : "bad"}-tx)" stroke-width="1.5" stroke-linejoin="round"/><circle cx="${last[0]}" cy="${last[1]}" r="2.5" fill="var(--${good ? "good" : "bad"}-tx)"/></svg>`;
+}
+
+async function drawHistory(box) {
+  if (!box || !isDefault()) return;           // снимки пишутся при фильтрах по умолчанию
+  let d;
+  try { d = await api("/api/history"); } catch (e) { return; }
+  const pts = d.points;
+  if (pts.length < 2) {
+    box.innerHTML = `<p class="sub">История появится после обновления, в котором что-то поменяется: каждое такое обновление — точка на графике.</p>`;
+    return;
+  }
+  box.innerHTML = `<h2>Как менялось</h2><p class="sub">${fmt(pts.length)} ${plural(pts.length, "снимок", "снимка", "снимков")}, с ${esc(day(pts[0].taken_at))} по ${esc(day(pts[pts.length - 1].taken_at))}. Зелёная линия — стало лучше, красная — хуже.</p>
+    <div class="tiles">${HISTORY.map((h) => {
+      const vals = pts.map((p) => p.metrics[h.key] ?? null);
+      const first = vals.find((v) => v != null), last = vals[vals.length - 1];
+      if (first == null || last == null) return "";
+      const better = h.up ? last >= first : last <= first;
+      const diff = last - first;
+      const show = (v) => (h.pct ? pct(v) : fmt(v));
+      return `<div class="tile"><div class="t">${h.title}</div><div class="v">${show(last)}</div>
+        <div class="d">${diff ? `${diff > 0 ? "+" : "−"}${h.pct ? pct(Math.abs(diff)) : fmt(Math.abs(diff))} с ${esc(day(pts[0].taken_at))}` : "без изменений"}</div>${spark(vals, better)}</div>`;
+    }).join("")}</div>`;
 }
 
 /* ───────────────────── цвета ───────────────────── */

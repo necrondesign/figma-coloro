@@ -241,7 +241,9 @@ def components(con, filt: Filter, q: str = "") -> dict:
     qn = norm(q)
     rows = con.execute(
         "SELECT n.file_key, n.comp, c.name, c.set_id, c.set_name, c.remote,"
-        " COUNT(*), SUM(n.ovr), COUNT(DISTINCT n.file_key || '|' || IFNULL(n.screen, ''))"
+        # Перечень экранов, а не их число: у набора экраны считаются по всем вариантам вместе —
+        # экран, где стоят две разные кнопки одного набора, — это один экран, а не два.
+        " COUNT(*), SUM(n.ovr), GROUP_CONCAT(DISTINCT n.screen), MAX(n.screen IS NULL)"
         " FROM nodes n" + NODE_SCAN +
         " LEFT JOIN components c ON c.file_key = n.file_key AND c.id = n.comp"
         f" WHERE n.type = 'INSTANCE' AND {where}"
@@ -249,18 +251,20 @@ def components(con, filt: Filter, q: str = "") -> dict:
         # компонентов и ищет каждый слой по ключу — на 4,3 млн слоёв 3,8 с вместо 1,2.
         " GROUP BY n.file_key, +n.comp", fargs).fetchall()
     sets: dict[str, dict] = {}
-    for fk, cid, name, sid, sname, remote, count, ovr, scr in rows:
+    for fk, cid, name, sid, sname, remote, count, ovr, scr_list, no_screen in rows:
         title = sname or name or "без названия"
         key = f"set:{sname}" if sname else f"c:{name or cid}"
         if qn and qn not in norm(title) and qn not in norm(name or ""):
             continue
         g = sets.setdefault(key, {"title": title, "set": sname, "cname": None if sname else (name or ""),
                                   "remote": bool(remote),
-                                  "instances": 0, "overridden": 0, "screens": 0, "files": set(),
+                                  "instances": 0, "overridden": 0, "screens": set(), "files": set(),
                                   "variants": {}, "components": []})
         g["instances"] += count
         g["overridden"] += ovr or 0
-        g["screens"] += scr
+        g["screens"].update((fk, s) for s in (scr_list or "").split(",") if s)
+        if no_screen:
+            g["screens"].add((fk, None))
         g["files"].add(fk)
         g["components"].append({"id": cid, "file_key": fk, "name": name or "", "count": count,
                                 "props": variant_props(name or "")})
@@ -270,6 +274,7 @@ def components(con, filt: Filter, q: str = "") -> dict:
     out = []
     for g in sets.values():
         g["files"] = len(g["files"])
+        g["screens"] = len(g["screens"])
         g["components"].sort(key=lambda c: -c["count"])
         out.append(g)
     out.sort(key=lambda g: -g["instances"])

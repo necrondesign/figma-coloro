@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import db as dbm
-from . import effects, health, inventory, memo, rules, scales, search, tokens, typography
+from . import effects, health, inventory, memo, report, rules, scales, search, tokens, typography
 from .figma import Figma, FigmaError
 from .filters import Filter
 from .load import update_all
@@ -299,6 +299,21 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(remember("effects", lambda: effects.report(con, filt)))
                 if u.path == "/api/images":
                     return self._json(remember("images", lambda: effects.images(con, filt)))
+                if u.path == "/api/history":
+                    return self._json({"points": health.history(con, (q.get("file") or ["*"])[0])})
+                if u.path == "/api/export":
+                    html = remember("export", lambda: report.build(con, filt, idx))
+                    body = html.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Content-Disposition",
+                                     f'attachment; filename="coloro-report-{datetime.now().strftime("%Y-%m-%d")}.html"')
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return None
                 if u.path == "/api/image-urls":
                     fk = (q.get("file_key") or [""])[0]
                     if not con.execute("SELECT 1 FROM files WHERE file_key = ?", (fk,)).fetchone():
