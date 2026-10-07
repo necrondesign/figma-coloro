@@ -153,6 +153,14 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest("#cpop,#swBtn")) $("#cpop").hidden = true;
 });
 addEventListener("resize", fit);
+// Полоски прокрутки видны, только пока прокручиваешь, и гаснут через секунду.
+document.addEventListener("scroll", (e) => {
+  const el = e.target === document ? document.documentElement : e.target;
+  if (!el.classList) return;
+  el.classList.add("scrolling");
+  clearTimeout(el._scrollT);
+  el._scrollT = setTimeout(() => el.classList.remove("scrolling"), 900);
+}, true);
 
 function applyTheme(light) {
   document.body.classList.toggle("light", light);
