@@ -362,7 +362,9 @@ def from_files(con, project: int) -> list[tuple]:
         " GROUP BY p.src, p.color, p.alpha", (project,)).fetchall()
     out = set()
     for src, c, a, _n in rows:
-        name = src[2:] if src.startswith("s:") else "Variable"
+        # Имя переменной неизвестно — каждое её значение отдельной строкой, иначе все переменные
+        # сложились бы в одну с десятками значений.
+        name = src[2:] if src.startswith("s:") else f"Variable · #{c}" + (f" {a}%" if a < 100 else "")
         out.add((name, c, a, None, "From files"))
     return sorted(out)
 
