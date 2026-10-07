@@ -368,7 +368,7 @@ def from_files(con, project: int) -> list[tuple]:
         # Имя переменной неизвестно — каждое её значение отдельной строкой, иначе все переменные
         # сложились бы в одну с десятками значений.
         name = src[2:] if src.startswith("s:") else f"Variable · #{c}" + (f" {a}%" if a < 100 else "")
-        out.add((name, c, a, None, "From files"))
+        out.add((name, c, a, None, "Styles in the files" if src.startswith("s:") else "Variables in the files"))
     return sorted(out)
 
 
@@ -444,15 +444,33 @@ def var_key(var: str) -> tuple[str | None, str]:
     return None, rest
 
 
-def catalog(con, project, idx: "Index", colours: list[dict], props: dict, binds: list | None = None) -> dict:
+def _mode_of(sig: str | None) -> tuple[str | None, str | None]:
+    """«коллекция=режим;…» → (коллекция, режим) для единственной коллекции; иначе первой."""
+    if not sig:
+        return None, None
+    c, _, m = sig.split(";")[0].partition("=")
+    return c, m
+
+
+def _mode_order(m: str):
+    try:
+        return tuple(int(x) for x in m.split(":"))
+    except ValueError:
+        return (10 ** 9,)
+
+
+def catalog(con, project, idx: "Index", colours: list[dict], props: dict, binds: list | None = None,
+            styles: dict | None = None) -> dict:
     """Все токены проекта одной страницей: по переменной — вид, коллекция, область, значения
     по темам и сколько раз она встречается в макетах.
 
     props: {(вид числа, значение): применений} — для сверки числовых токенов.
-    binds: [(переменная, RRGGBB, прозрачность, применений, экранов, файлов)] — какие переменные
-    привязаны в макетах на самом деле. Если в справочнике есть ключи переменных, привязки
-    сопоставляются с токенами точно, а не по совпадению цвета."""
+    binds: [(переменная, темы, RRGGBB, прозрачность, применений, экранов, файлов)] — какие
+    переменные привязаны в макетах на самом деле и в какой теме. Если в справочнике есть ключи
+    переменных, привязки сопоставляются с токенами точно, а не по совпадению цвета.
+    styles: {имя стиля: [применений, экранов, файлов]} — сколько раз стоит каждый стиль."""
     binds = binds or []
+    styles = styles or {}
     if idx.source == "files":
         rows = [{"name": n, "type": "color", "mode": m or "", "value": "#" + c, "color": c, "alpha": a,
                  "collection": coll or "", "scope": "", "library": "", "key": ""}
@@ -466,15 +484,33 @@ def catalog(con, project, idx: "Index", colours: list[dict], props: dict, binds:
     order = {m: i for i, m in enumerate(themes)}
     by_value = {(c["color"], c["alpha"]): c for c in colours}
 
-    # Привязки по переменной: ключ библиотечной или id своей.
+    # Привязки по переменной: ключ библиотечной или id своей; значения — по теме, в которой
+    # переменная показана. Экран без явно включённой темы показывает тему по умолчанию ("").
     bound: dict[str, dict] = {}
-    for var, c, a, uses, screens, files in binds:
+    for var, sig, c, a, uses, screens, files in binds:
         k, local = var_key(var)
         b = bound.setdefault(k or local, {"key": k, "local": local, "uses": 0, "screens": 0, "files": 0, "values": {}})
         b["uses"] += uses
         b["screens"] = max(b["screens"], screens)
         b["files"] = max(b["files"], files)
-        b["values"][(c, a)] = b["values"].get((c, a), 0) + uses
+        mode = _mode_of(sig)[1] or ""
+        cell = b["values"].setdefault(mode, {})
+        cell[(c, a)] = cell.get((c, a), 0) + uses
+    top = lambda cell: max(cell.items(), key=lambda kv: kv[1])[0]
+    # Явно включённая тема, где все переменные выглядят как по умолчанию, — это она же.
+    explicit = {m for b in bound.values() for m in b["values"] if m}
+    for m in sorted(explicit, key=_mode_order):
+        pairs = [(top(b["values"][""]), top(b["values"][m])) for b in bound.values() if "" in b["values"] and m in b["values"]]
+        if pairs and all(x == y for x, y in pairs):
+            for b in bound.values():
+                if m in b["values"]:
+                    cell = b["values"].setdefault("", {})
+                    for v, n in b["values"].pop(m).items():
+                        cell[v] = cell.get(v, 0) + n
+    # Имена тем без справочника неизвестны — «Mode 1» (по умолчанию), «Mode 2»… по порядку режимов.
+    used = {m for b in bound.values() for m in b["values"]}
+    all_modes = ([""] if "" in used else []) + sorted(used - {""}, key=_mode_order)
+    mode_label = {m: f"Mode {i + 1}" for i, m in enumerate(all_modes)} if len(all_modes) > 1 else {}
     lib_keys = {r["key"] for r in rows if r["key"]}
     exact = bool(lib_keys) or idx.source == "files"
 
@@ -504,11 +540,18 @@ def catalog(con, project, idx: "Index", colours: list[dict], props: dict, binds:
             continue
         coll = "Variables in the files" if idx.source == "files" else "Bound in the files, not in the library"
         short = (b["key"] or b["local"])[:10]
+        values = []
+        for mode, cells in b["values"].items():
+            c, a = top(cells)                                         # в одной теме значение одно
+            values.append({"mode": mode_label.get(mode, ""), "value": "#" + c, "color": c, "alpha": a,
+                           "uses": sum(cells.values()), "raw": 0, "screens": 0, "files": 0, "from_name": False})
         g = {"name": f"Variable {short}", "type": "color", "collection": coll, "library": "", "scope": "",
-             "keys": {b["key"] or b["local"]}, "unknown": True,
-             "values": [{"mode": "", "value": "#" + c, "color": c, "alpha": a, "uses": n, "raw": 0, "screens": 0,
-                         "files": 0, "from_name": False} for (c, a), n in sorted(b["values"].items(), key=lambda kv: -kv[1])]}
+             "keys": {b["key"] or b["local"]}, "unknown": True, "values": values}
         groups[("~var", short, coll, "")] = g
+    for label in mode_label.values():
+        if label not in themes:
+            themes.append(label)
+            order[label] = len(order)
 
     out = []
     for g in groups.values():
@@ -537,6 +580,9 @@ def catalog(con, project, idx: "Index", colours: list[dict], props: dict, binds:
         # Точные привязки: сколько раз именно эта переменная стоит в макетах.
         bs = [bound[k] for k in g.pop("keys") if k in bound]
         g["bound"] = sum(b["uses"] for b in bs) if (exact or bs) else None
+        if idx.source == "files" and not g.get("unknown") and g["name"] in styles:
+            # Стиль цвета: его привязка — сам стиль, а не переменная.
+            g["bound"], g["screens"], g["files"] = styles[g["name"]]
         if bs:
             g["screens"] = max(g["screens"], max(b["screens"] for b in bs))
             g["files"] = max(g["files"], max(b["files"] for b in bs))

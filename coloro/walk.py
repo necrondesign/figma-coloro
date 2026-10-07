@@ -37,6 +37,7 @@ class Ctx:
     pinst: str | None = None                   # ближайший родитель-инстанс
     screen: str | None = None                  # экран, в который входит поддерево
     anchor: str | None = None                  # ближайший предок, на которого ведёт ссылка
+    modes: str | None = None                   # темы переменных, включённые у предков: «коллекция=режим;…»
 
 
 @dataclass
@@ -77,6 +78,18 @@ def _style_name(styles: dict, sid) -> str:
 # текст со стилем шрифта и вручную набранным цветом — это цвет, набранный вручную.
 _STYLE_KEYS = {"fills": ("fill", "fills"), "strokes": ("stroke", "strokes")}
 _SLOT = {"fills": "fill", "strokes": "stroke"}
+
+
+def with_modes(sig: str | None, node: dict) -> str | None:
+    """Темы переменных над слоем: кадр может явно включить режим коллекции («тёмная тема»),
+    и он действует на всё внутри, пока ниже не включат другой."""
+    em = node.get("explicitVariableModes")
+    if not em:
+        return sig
+    d = dict(x.split("=", 1) for x in sig.split(";")) if sig else {}
+    for coll, mode in em.items():
+        d[str(coll).replace("VariableCollectionId:", "")] = str(mode)
+    return ";".join(f"{c}={m}" for c, m in sorted(d.items()))
 
 
 def _var_id(var) -> str | None:
@@ -207,9 +220,10 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
 
     children=False — записать только сам узел: его детей загрузчик скачает отдельно.
     """
-    stack = [(root, ctx.parent_id, ctx.hidden, ctx.sections, ctx.pinst, ctx.screen, ctx.anchor)]
+    stack = [(root, ctx.parent_id, ctx.hidden, ctx.sections, ctx.pinst, ctx.screen, ctx.anchor, ctx.modes)]
     while stack:
-        node, parent, hidden_above, sections, pinst, screen, anchor = stack.pop()
+        node, parent, hidden_above, sections, pinst, screen, anchor, modes = stack.pop()
+        modes = with_modes(modes, node)
         nid = node.get("id") or ""
         ntype = node.get("type") or ""
         name = node.get("name") or ""
@@ -242,7 +256,9 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
         # а это на миллионах слоёв разница в разы.
         tail = (row[6], 1 if pinst else 0, row[7], screen, row[17])
         for p in paints_of(node, styles, intern):
-            out.paints.append((ctx.file_key, ctx.page_id, nid, *p[:6], *tail, intern(p[6]) if p[6] else None))
+            # У привязанной переменной — ещё и тема, в которой она здесь показана.
+            out.paints.append((ctx.file_key, ctx.page_id, nid, *p[:6], *tail, intern(p[6]) if p[6] else None,
+                               intern(modes) if p[6] and modes else None))
         # Отступы и эффекты сверяются только у положенного на экран вручную: внутри компонента
         # их задаёт библиотека. Хранить их там — 93% строк впустую.
         if pinst is None and ntype != "INSTANCE":
@@ -259,7 +275,7 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
             child_sections = sections + (name,) if ntype == "SECTION" else sections
             child_pinst = nid if ntype == "INSTANCE" else pinst
             for kid in reversed(kids):
-                stack.append((kid, nid, hidden, child_sections, child_pinst, screen, anchor))
+                stack.append((kid, nid, hidden, child_sections, child_pinst, screen, anchor, modes))
 
 
 def child_ctx(node: dict, ctx: Ctx) -> Ctx:
@@ -273,4 +289,5 @@ def child_ctx(node: dict, ctx: Ctx) -> Ctx:
         pinst=nid if ntype == "INSTANCE" else ctx.pinst,
         screen=ctx.screen or (nid if ntype in SCREEN_TYPES else None),
         anchor=nid if plain_id(nid) else ctx.anchor,
+        modes=with_modes(ctx.modes, node),
     )

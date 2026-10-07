@@ -109,9 +109,17 @@ def bindings(con, filt: Filter) -> list[tuple]:
     применений, экранов, файлов). Один проход по краскам."""
     where, args = filt.where(paints=True)
     return con.execute(
-        "SELECT v.v, p.color, p.alpha, COUNT(*), COUNT(DISTINCT p.file_key || '|' || IFNULL(p.screen, '')),"
-        " COUNT(DISTINCT p.file_key) FROM paints p JOIN vals v ON v.id = p.var" + JOIN +
-        f" WHERE p.var IS NOT NULL AND {where} GROUP BY v.v, p.color, p.alpha", args).fetchall()
+        "SELECT v.v, m.v, p.color, p.alpha, COUNT(*), COUNT(DISTINCT p.file_key || '|' || IFNULL(p.screen, '')),"
+        " COUNT(DISTINCT p.file_key) FROM paints p JOIN vals v ON v.id = p.var LEFT JOIN vals m ON m.id = p.vmode" + JOIN +
+        f" WHERE p.var IS NOT NULL AND {where} GROUP BY v.v, m.v, p.color, p.alpha", args).fetchall()
+
+
+def style_uses(con, filt: Filter) -> dict[str, list]:
+    """Сколько раз каждый стиль цвета стоит в макетах: имя → [применений, экранов, файлов]."""
+    where, args = filt.where(paints=True)
+    return {src[2:]: [n, scr, files] for src, n, scr, files in con.execute(
+        "SELECT p.src, COUNT(*), COUNT(DISTINCT p.file_key || '|' || IFNULL(p.screen, '')), COUNT(DISTINCT p.file_key)"
+        " FROM paints p" + JOIN + f" WHERE p.src LIKE 's:%' AND {where} GROUP BY p.src", args)}
 
 
 def gradients(con, filt: Filter) -> list[dict]:

@@ -239,7 +239,7 @@ class Projects(unittest.TestCase):
         tokens.store(self.con, tokens.parse_all(csv_text), "kit.csv", a)
         f = Filter(project=a)
         idx = tokens.load(self.con, a)
-        cat = tokens.catalog(self.con, a, idx, inventory.colours(self.con, f, idx), {}, inventory.bindings(self.con, f))
+        cat = tokens.catalog(self.con, a, idx, inventory.colours(self.con, f, idx), {}, inventory.bindings(self.con, f), inventory.style_uses(self.con, f))
         by = {g["name"]: g for g in cat["items"]}
         self.assertTrue(cat["exact"])
         self.assertEqual(by["brand/pink"]["bound"], 2)
@@ -252,14 +252,17 @@ class Projects(unittest.TestCase):
         a = server.create_project(self.con, "App")["id"]
         server.add_source(self.con, "https://www.figma.com/design/KA/x", None, a)
         v = lambda r, g, b: solid(r, g, b, boundVariables={"color": {"type": "VARIABLE_ALIAS", "id": "VariableID:12:34"}})
-        load_file(self.con, FakeFigma([page("1:1", "Stage", [node("s", "FRAME", children=[
-            node("a", fills=[v(1, 1, 1)]), node("b", fills=[v(0, 0, 0)])])])]), "KA")
+        load_file(self.con, FakeFigma([page("1:1", "Stage", [
+            node("s", "FRAME", children=[node("a", fills=[v(1, 1, 1)])]),
+            node("d", "FRAME", explicitVariableModes={"VariableCollectionId:12:0": "12:1"}, children=[node("b", fills=[v(0, 0, 0)])])])]), "KA")
         f = Filter(project=a)
         idx = tokens.load(self.con, a)
-        cat = tokens.catalog(self.con, a, idx, inventory.colours(self.con, f, idx), {}, inventory.bindings(self.con, f))
+        cat = tokens.catalog(self.con, a, idx, inventory.colours(self.con, f, idx), {}, inventory.bindings(self.con, f), inventory.style_uses(self.con, f))
         var = [g for g in cat["items"] if g.get("unknown")]
         self.assertEqual(len(var), 1)
-        self.assertEqual(sorted(x["color"] for x in var[0]["values"]), ["000000", "FFFFFF"])
+        # Тёмный экран явно включает режим 12:1, второй экран — режим по умолчанию: две колонки.
+        self.assertEqual(sorted((x["mode"], x["color"]) for x in var[0]["values"]), [("Mode 1", "FFFFFF"), ("Mode 2", "000000")])
+        self.assertEqual(cat["themes"], ["Mode 1", "Mode 2"])
         self.assertEqual(var[0]["bound"], 2)
 
     def test_token_library_per_project(self):

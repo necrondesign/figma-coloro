@@ -17,7 +17,7 @@ from .textnorm import norm, whole_words
 
 # Формат данных. Поднимается, когда меняется то, что извлекается из макета:
 # файлы, загруженные в старом формате, при следующем обновлении перезагружаются.
-FORMAT = 6
+FORMAT = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
@@ -93,7 +93,7 @@ CREATE INDEX IF NOT EXISTS nodes_page ON nodes (file_key, page_id);
 CREATE TABLE IF NOT EXISTS paints (
     file_key TEXT, page_id TEXT, node_id TEXT, slot TEXT, kind TEXT,
     color TEXT, alpha INTEGER, src TEXT, grad INTEGER,
-    hid INTEGER, inst INTEGER, sect INTEGER, screen TEXT, first_seen TEXT, var INTEGER
+    hid INTEGER, inst INTEGER, sect INTEGER, screen TEXT, first_seen TEXT, var INTEGER, vmode INTEGER
 );
 CREATE INDEX IF NOT EXISTS paints_page ON paints (file_key, page_id);
 -- Цвет вместе с прозрачностью: список различных цветов читается из индекса, а не перебором
@@ -148,7 +148,7 @@ _ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"), ("ovr", "INTEGER"), 
           "sources": (("project_id", "INTEGER"),),
           "tokens": (("project_id", "INTEGER"), ("type", "TEXT"), ("value", "TEXT"), ("scope", "TEXT"), ("library", "TEXT"), ("key", "TEXT")),
           "paints": (("hid", "INTEGER"), ("inst", "INTEGER"), ("sect", "INTEGER"), ("screen", "TEXT"),
-                     ("first_seen", "TEXT"), ("var", "INTEGER"))}
+                     ("first_seen", "TEXT"), ("var", "INTEGER"), ("vmode", "INTEGER"))}
 # Индексы, которые больше не нужны: в старой базе их убираем, чтобы не занимали место.
 _DROPPED = ("paints_node", "props_node", "effects_node", "images_node", "paints_color")
 

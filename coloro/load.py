@@ -32,7 +32,7 @@ BATCH = 8          # верхних слоёв страницы в одном з
 MAX_DEPTH = 40     # насколько глубоко можно раскрывать один слой, если он не скачивается целиком
 
 NODE_COLS = 23
-PAINT_COLS = 15
+PAINT_COLS = 16
 
 
 class Stopped(Exception):
