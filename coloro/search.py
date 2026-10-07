@@ -135,6 +135,13 @@ def condition(kind: str, q: dict, con=None) -> tuple[str, list, dict]:
         from . import effects
         c, a = effects.condition(q)
         return c, a, {}
+    if kind == "textexact":
+        # Один и тот же текст во всех местах — по нормализованному тексту целиком.
+        value = norm(q.get("text") or "")
+        if not value:
+            raise SearchError("Choose a text")
+        return "n.type = 'TEXT' AND n.tnorm = ?", [value], {}
+
     if kind == "gradient":
         try:
             gid = int(q.get("grad") or 0)
@@ -383,19 +390,31 @@ def build(con, q: dict) -> tuple[str, list, dict]:
         stems = query_stems(text)
         if not stems:
             raise SearchError("Enter a word or phrase")
-        where = _one(q, "where") or "all"
+        # Где искать — несколько мест сразу: надписи, названия слоёв, названия компонентов.
+        where = {w for w in _many(q, "where") if w in ("text", "name", "component")}
+        if not where or "all" in _many(q, "where"):
+            where = {"text", "name", "component"}
+        # Как совпадать: «forms» — слова в любой форме и в любом порядке; «exact» — фраза целиком,
+        # как написана (без учёта регистра и «ё»).
+        exact = _one(q, "mode") == "exact"
+        phrase = norm(text)
+
+        def match(column):
+            if exact:
+                return f"{column} LIKE ?", [f"%{phrase}%"]
+            return _all_words(column, stems)
         ors, oargs = [], []
-        if where in ("all", "text"):
-            c, a = _all_words("n.tnorm", stems)
+        if "text" in where:
+            c, a = match("n.tnorm")
             ors.append(f"(n.type = 'TEXT' AND {c})")
             oargs += a
-        if where in ("all", "name"):
-            c, a = _all_words("n.nnorm", stems)
+        if "name" in where:
+            c, a = match("n.nnorm")
             ors.append(f"({c})")
             oargs += a
-        if where in ("all", "component"):
+        if "component" in where:
             # Название компонента или набора: «кнопка» находит все инстансы кнопок.
-            c, a = _all_words("norm(IFNULL(set_name, '') || ' ' || IFNULL(name, ''))", stems)
+            c, a = match("norm(IFNULL(set_name, '') || ' ' || IFNULL(name, ''))")
             ic, ia = _instances_of(_components_where(con, c, a))
             if ic != "0":
                 ors.append(f"({ic})")
@@ -536,3 +555,57 @@ def find(con, filt: Filter, q: dict, limit: int = 60, offset: int = 0) -> dict:
             "facets": {"type": top(facets["type"]), "page": top(facets["page"]), "file": top(facets["file"]),
                        "comp": top(facets["comp"]),
                        "props": {k: top(v, 20) for k, v in sorted(facets["props"].items())}}}
+
+
+# ---------------------------------------------------------------- тексты
+
+TEXT_CATS = {
+    "all": lambda i: True,
+    "repeated": lambda i: i["uses"] > 1,
+    "once": lambda i: i["uses"] == 1,
+    "variants": lambda i: i["variants"] > 1,
+    "unstyled": lambda i: i["unstyled"] > 0,
+}
+TEXT_SORTS = {
+    "uses": lambda i: (-i["uses"], i["key"]),
+    "screens": lambda i: (-i["screens"], -i["uses"], i["key"]),
+    "long": lambda i: (-len(i["key"]), i["key"]),
+    "az": lambda i: i["key"],
+}
+
+
+def texts(con, filt: Filter, q: str = "", mode: str = "forms", limit: int = 500,
+          cat: str = "all", sort: str = "uses") -> dict:
+    """Все тексты макетов: одинаковый текст в разных местах — одна строка со счётом.
+
+    Видно, какие формулировки повторяются, где одно и то же написано по-разному и какие тексты
+    стоят без стиля. Одинаковыми считаются тексты, совпадающие без учёта регистра, «ё» и пробелов."""
+    where, args = filt.where()
+    cond = ""
+    if q:
+        stems = query_stems(q)
+        if mode == "exact":
+            cond, cargs = " AND n.tnorm LIKE ?", [f"%{norm(q)}%"]
+        elif stems:
+            c, cargs = _all_words("n.tnorm", stems)
+            cond = " AND " + c
+        else:
+            cargs = []
+        args = args + cargs
+    rows = con.execute(
+        "SELECT n.tnorm, MIN(n.text), COUNT(*), COUNT(DISTINCT n.file_key || '|' || IFNULL(n.screen, '')),"
+        " COUNT(DISTINCT n.file_key), SUM(n.tstyle IS NULL AND n.pinst IS NULL), SUM(n.pinst IS NOT NULL),"
+        " MIN(n.first_seen), COUNT(DISTINCT n.text)"
+        " FROM nodes n" + NODE_SCAN +
+        f" WHERE {where} AND n.type = 'TEXT' AND n.tnorm IS NOT NULL AND n.tnorm != ''{cond}"
+        " GROUP BY n.tnorm", args).fetchall()
+    items = [{"key": key, "text": (text or "")[:300], "uses": uses, "screens": screens, "files": files,
+              "unstyled": unstyled or 0, "in_instances": inst or 0, "first_seen": first, "variants": variants}
+             for key, text, uses, screens, files, unstyled, inst, first, variants in rows]
+    # Счёт по всем текстам, а не по показанной части: иначе редкие тексты за пределом списка
+    # пропадали бы из счётчиков категорий.
+    counts = {k: sum(1 for i in items if f(i)) for k, f in TEXT_CATS.items()}
+    chosen = [i for i in items if TEXT_CATS.get(cat, TEXT_CATS["all"])(i)]
+    chosen.sort(key=TEXT_SORTS.get(sort, TEXT_SORTS["uses"]))
+    return {"total": len(items), "total_uses": sum(i["uses"] for i in items), "counts": counts,
+            "matched": len(chosen), "items": chosen[:limit]}

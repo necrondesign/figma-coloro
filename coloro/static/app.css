@@ -53,6 +53,7 @@ body.r-closed #right{transform:translateX(calc(100% + 24px));opacity:0;pointer-e
 .b.main{background:var(--accent);color:#fff} .b.main:hover{filter:brightness(1.08)}
 .b.quiet{background:transparent;color:var(--label)} .b.quiet:hover{background:var(--btn);color:var(--txt)}
 .b.danger{color:var(--bad-tx)}
+.b.sm{padding:5px 8px;font-size:11.5px;gap:4px}
 .link{border:0;background:none;color:var(--accent);cursor:pointer;padding:0;font-size:11px}
 .in{background:var(--btn);border:1px solid transparent;border-radius:var(--r-sm);padding:7px 9px;color:var(--txt);min-width:0;width:100%}
 .in:focus{outline:none;border-color:var(--accent)}
@@ -92,7 +93,7 @@ select.in{padding:6px 8px}
 .fmenu{position:absolute;right:6px;top:100%;z-index:6;width:220px}
 
 /* right: content types as a row of icons */
-.types{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 14px 2px}
+.types{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;padding:0 14px 2px}
 .tbtn{position:relative;height:36px;border:0;border-radius:var(--r-sm);background:none;color:var(--label);cursor:pointer;display:grid;place-items:center}
 .tbtn:hover{background:var(--btn);color:var(--txt)}
 .tbtn.on{background:var(--btn);color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent)}
@@ -253,10 +254,19 @@ button.tile{cursor:pointer} button.tile:hover{background:var(--btn)}
 @keyframes tout{to{opacity:0;transform:translateY(8px)}}
 
 /* settings */
-.veil{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:60;display:grid;place-items:center}
+.veil{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:60;display:grid;place-items:center}
+body.light .veil{background:rgba(0,0,0,.35)}
 .dlg{background:var(--panel);border-radius:var(--r);box-shadow:var(--shadow-lg);width:480px;max-width:calc(100vw - 32px);max-height:calc(100vh - 32px);overflow:auto;padding:16px}
 .dlg h3{margin:0;font-size:14px}
 .dlg h4{margin:16px 0 6px;font-size:12px}
+.dlg h4:first-child{margin-top:4px}
+.dlg .f{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.dlg textarea.in{resize:vertical;min-height:72px;font-family:inherit}
+.dlg .hint{color:var(--muted);font-size:11px}
+.dlg .acts{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.checks{display:flex;flex-direction:column;gap:2px;padding:0 6px}
+.checks label{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer}
+.checks input{margin:0;accent-color:var(--accent)}
 .dlg p{color:var(--label);margin:0 0 8px}
 
 /* narrow window: panels open as dropdowns from the floating buttons */

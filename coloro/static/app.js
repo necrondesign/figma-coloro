@@ -76,6 +76,7 @@ const DEFAULT_SHOW = {
   effects: { cat: "unbound" },
   images: { cat: "repeated" },
   components: { cat: "all", q: "" },
+  text: { cat: "all", q: "", mode: "forms", sort: "uses" },
 };
 const S = {
   st: null,
@@ -121,7 +122,8 @@ function fq(extra = {}) {
 /** Search query as request parameters. */
 function sq(extra = {}) {
   const s = S.search || {};
-  const o = { q: s.q, where: s.where !== "all" ? s.where : "", w: s.w, h: s.h, tol: s.tol, color: s.color, ctol: s.color ? s.ctol : "",
+  const where = s.where && s.where.length && s.where.length < 3 ? s.where : [];
+  const o = { q: s.q, where, mode: s.mode === "exact" ? "exact" : "", w: s.w, h: s.h, tol: s.tol, color: s.color, ctol: s.color ? s.ctol : "",
     type: s.type || [], page: s.page || [], comp: s.comp || [], ...extra };
   for (const [k, v] of Object.entries(s.props || {})) o["prop_" + k] = v;
   return fq(o);
@@ -178,10 +180,7 @@ function drawProject() {
   m.innerHTML = S.st.projects.map((x) => `<button data-p="${x.id}" class="${x.id === p.id ? "on" : ""}"><span class="pdot" style="background:${projGradient(x.id)}"></span><span class="grow">${esc(x.name)}</span><span class="muted">${x.files}</span></button>`).join("")
     + `<hr><button data-act="new">New project</button><button data-act="rename">Rename project</button><button data-act="delete" class="danger">Delete project</button>`;
   m.querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => { S.project = +b.dataset.p; m.classList.remove("on"); S.search = null; save(); syncSearchForm(); refresh(); }));
-  m.querySelector("[data-act=new]").onclick = (e) => { e.stopPropagation(); nameForm(m, "", "Create project", async (name) => {
-    const r = await api("/api/projects", { name }); S.project = r.id; save(); m.classList.remove("on"); toast(`Project created: ${name}`, "ok"); await refresh();
-    setClosed("l", false); $("#addForm").hidden = false; $("#addForm").elements.url.focus();
-  }); };
+  m.querySelector("[data-act=new]").onclick = () => { m.classList.remove("on"); newProjectDialog(); };
   m.querySelector("[data-act=rename]").onclick = (e) => { e.stopPropagation(); nameForm(m, p.name, "Rename", async (name) => {
     await api("/api/projects/rename", { id: p.id, name }); m.classList.remove("on"); await refresh();
   }); };
@@ -368,6 +367,7 @@ const TYPES = [
   { k: "overview", t: "Overview", icon: "M2.5 13.5v-5M6.5 13.5v-9M10.5 13.5v-6M13.5 13.5v-11" },
   { k: "colors", t: "Colors", lv: "stray", icon: "M8 2.5a5.5 5.5 0 1 0 0 11c1 0 1.2-.8.8-1.5-.5-.8 0-1.8 1-1.8h1.4a2.3 2.3 0 0 0 2.3-2.3C13.5 4.8 11 2.5 8 2.5Z" },
   { k: "typography", t: "Typography", lv: "text_nostyle_pct", icon: "M3 4h10M8 4v9M5.5 13h5" },
+  { k: "text", t: "Text", icon: "M2.5 4h11M2.5 7h11M2.5 10h7M2.5 13h9" },
   { k: "spacing", t: "Spacing & radius", lv: "scale_off_pct", icon: "M3 3v10M13 3v10M6 8h4" },
   { k: "effects", t: "Effects", icon: "M4 4h7v7H4zM6 13h7V6" },
   { k: "images", t: "Images", icon: "M2.5 3.5h11v9h-11zM2.5 10l3-3 3 3 2-2 3 3" },
@@ -454,7 +454,7 @@ form.onsubmit = (e) => {
   const prev = S.search || {};
   if (!q && !w && !h && !prev.color) { S.search = null; syncSearchForm(); route(); return; }
   // A new query starts without narrowing; the «search in» option and tolerances stay.
-  S.search = { where: "all", tol: "", ctol: 3, ...prev, q, w, h, type: [], page: [], comp: [], props: {} };
+  S.search = { where: [], mode: "forms", tol: "", ctol: 3, ...prev, q, w, h, type: [], page: [], comp: [], props: {} };
   syncSearchForm(); route();
 };
 // Enter в любом поле: у формы несколько полей и нет кнопки, сама она по Enter не отправится.
@@ -503,7 +503,7 @@ $("#capply").onclick = () => {
   if (!/^[0-9A-F]{6}$/.test(hex)) { toast("Enter a color as #RRGGBB", "err"); return; }
   if (cp.aOn.checked) hex += Math.round((cp.a.value / 100) * 255).toString(16).padStart(2, "0").toUpperCase();
   const q = form.elements.q.value.trim(), w = form.elements.w.value.trim(), h = form.elements.h.value.trim();
-  S.search = { where: "all", tol: "", ...(S.search || {}), q, w, h, color: "#" + hex, ctol: cp.tol.value, type: [], page: [], comp: [], props: {} };
+  S.search = { where: [], mode: "forms", tol: "", ...(S.search || {}), q, w, h, color: "#" + hex, ctol: cp.tol.value, type: [], page: [], comp: [], props: {} };
   $("#cpop").hidden = true; syncSearchForm(); route();
 };
 $("#cclear").onclick = () => {
@@ -516,7 +516,9 @@ function writeHash() {
   let h = "#/" + (S.search ? "search" : S.type);
   if (S.search) {
     const s = S.search, q = new URLSearchParams();
-    for (const k of ["q", "where", "w", "h", "tol", "color", "ctol"]) if (s[k] && !(k === "where" && s[k] === "all") && !(k === "ctol" && !s.color)) q.set(k, s[k]);
+    for (const k of ["q", "w", "h", "tol", "color", "ctol"]) if (s[k] && !(k === "ctol" && !s.color)) q.set(k, s[k]);
+    if (s.mode === "exact") q.set("mode", "exact");
+    if (s.where && s.where.length && s.where.length < 3) s.where.forEach((v) => q.append("where", v));
     for (const k of ["type", "page", "comp"]) (s[k] || []).forEach((v) => q.append(k, v));
     for (const [k, vs] of Object.entries(s.props || {})) vs.forEach((v) => q.append("prop_" + k, v));
     h += "?" + q.toString();
@@ -529,7 +531,7 @@ function readHash() {
     const q = new URLSearchParams(query);
     const props = {};
     for (const [k, v] of q) if (k.startsWith("prop_")) (props[k.slice(5)] = props[k.slice(5)] || []).push(v);
-    S.search = { q: q.get("q") || "", where: q.get("where") || "all", w: q.get("w") || "", h: q.get("h") || "", tol: q.get("tol") || "",
+    S.search = { q: q.get("q") || "", where: q.getAll("where"), mode: q.get("mode") || "forms", w: q.get("w") || "", h: q.get("h") || "", tol: q.get("tol") || "",
       color: q.get("color") || "", ctol: q.get("ctol") || 3, type: q.getAll("type"), page: q.getAll("page"), comp: q.getAll("comp"), props };
   } else if (TYPES.some((t) => t.k === path)) {
     S.type = path; S.search = null;
@@ -1006,6 +1008,41 @@ async function viewTypography(el, stale) {
   searchPlaces((i) => ({ kind: "font", font: i.font_id })));
 }
 
+/* ───────────────────── text ───────────────────── */
+
+const XCATS = [["all", "All"], ["repeated", "Repeated"], ["once", "Used once"], ["variants", "Written differently"], ["unstyled", "Without a style"]];
+const XHINT = {
+  all: "Every text in the files. The same text in different places is one row.",
+  repeated: "Texts used in more than one place. Good candidates for a shared component or a copy deck.",
+  once: "Texts used in one place only.",
+  variants: "The same text with different capitalization or spacing, such as “Buy now” and “Buy Now”.",
+  unstyled: "Texts placed by hand without a text style in at least one place.",
+};
+
+async function viewText(el, stale) {
+  const sh = S.show.text;
+  const d = await api("/api/texts" + fq({ q: sh.q, mode: sh.mode === "exact" ? "exact" : "", cat: sh.cat, sort: sh.sort, limit: 3000 }));
+  if (stale()) return;
+  const items = d.items;
+  $("#tname").innerHTML = `Text<span>${pl(d.total, "text")}</span>`;
+  drawShow(`<div class="field"><span class="label">Find text</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Word or phrase"></div>
+    ${seg([["forms", "Any word form"], ["exact", "Exact phrase"]], sh.mode === "exact" ? "exact" : "forms", "tmode")}
+    <div class="sec">Show</div>${chips(XCATS.map(([k, t]) => [k, t, d.counts[k]]), sh.cat)}
+    <div class="field" style="margin-top:6px"><span class="label">Sort by</span>${select("sort", [["uses", "Most used"], ["screens", "Number of screens"], ["long", "Longest first"], ["az", "A to Z"]], sh.sort)}</div>`,
+  (root) => {
+    bindShow(root, "text", () => route());
+    root.querySelectorAll("[data-tmode]").forEach((b) => (b.onclick = () => { sh.mode = b.dataset.tmode; save(); route(); }));
+  });
+  el.innerHTML = `<div class="head"><div class="grow"><h1>Text · ${esc(XCATS.find(([k]) => k === sh.cat)[1])}</h1>
+    <p class="sub">${esc(XHINT[sh.cat])} ${pl(d.matched, "text")}${d.matched > items.length ? `, the first ${num(items.length)} shown` : ""}. Texts are equal when they match ignoring case, ё and spaces.</p></div></div>
+    <div class="list" id="list"></div>`;
+  rowsWithPlaces($("#list"), items, (i, n) => `<div class="crow" data-n="${n}"><span class="sample fsample">Aa</span>
+      <div class="name" title="${esc(i.text)}">${esc(i.text)}<small>${i.variants > 1 ? `${pl(i.variants, "spelling")} · ` : ""}${i.in_instances ? `${num(i.in_instances)} inside instances · ` : ""}${i.first_seen ? "since " + esc(day(i.first_seen)) : ""}</small></div>
+      ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "place" })}
+      <div class="what">${i.unstyled ? `<span class="tag unbound">No style</span>${num(i.unstyled)} of ${num(i.uses)}` : '<span class="tag ok">Styled or in instances</span>'}</div></div>`,
+  searchPlaces((i) => ({ kind: "textexact", text: i.text })));
+}
+
 /* ───────────────────── spacing ───────────────────── */
 
 const SGROUPS = [["spacing", "Spacing"], ["radius", "Radius"], ["stroke", "Stroke"]];
@@ -1168,13 +1205,22 @@ async function viewSearch(el, stale) {
     `<label><input type="checkbox" value="${esc(f.value)}" ${(s[key] || []).includes(String(f.value)) ? "checked" : ""}><span>${esc(label(f.value))}</span><em>${num(f.count)}</em></label>`).join("")}</div>` : "");
   const props = Object.entries(d.facets.props).map(([k, list]) => `<div class="sec">${esc(k)}</div><div class="facet" data-prop="${esc(k)}">${list.map((f) =>
     `<label><input type="checkbox" value="${esc(f.value)}" ${((s.props || {})[k] || []).includes(f.value) ? "checked" : ""}><span>${esc(f.value)}</span><em>${num(f.count)}</em></label>`).join("")}</div>`).join("");
-  drawShow(`<div class="field"><span class="label">Search text in</span>${select("where", [["all", "Text, layer and component names"], ["text", "Text only"], ["name", "Layer names only"], ["component", "Component names only"]], s.where || "all")}</div>
+  const where = s.where && s.where.length ? s.where : ["text", "name", "component"];
+  drawShow(`${s.q ? `<div class="sec">Search text in</div><div class="checks" data-where>
+      ${[["text", "Text layers"], ["name", "Layer names"], ["component", "Component names"]].map(([k, t]) => `<label><input type="checkbox" value="${k}" ${where.includes(k) ? "checked" : ""}>${t}</label>`).join("")}</div>
+    <div class="sec">Match</div>${seg([["forms", "Any word form"], ["exact", "Exact phrase"]], s.mode === "exact" ? "exact" : "forms", "mode")}
+    <p class="label" style="padding:6px;margin:0">${s.mode === "exact" ? "The words in this order, as written. Case and ё are ignored." : "All words in any form and any order: “buy coins” finds “Buy 100 coins”."}</p>` : ""}
     <div class="field"><span class="label">Size tolerance, px</span><input class="in" data-o="tol" value="${esc(s.tol || "")}" placeholder="0.5" inputmode="decimal"></div>
     ${facet("Type", "type", d.facets.type, (v) => TYPE_NAMES[v] || v)}
     ${facet("Component", "comp", d.facets.comp)}${props}
     ${facet("Page", "page", d.facets.page)}`,
   (root) => {
-    root.querySelector("[data-sel=where]").onchange = (e) => { s.where = e.target.value; route(); };
+    root.querySelectorAll("[data-where] input").forEach((i) => (i.onchange = () => {
+      const chosen = $$("[data-where] input:checked", root).map((x) => x.value);
+      if (!chosen.length) { i.checked = true; toast("Choose at least one place to search"); return; }
+      s.where = chosen; route();
+    }));
+    root.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = () => { s.mode = b.dataset.mode; route(); }));
     root.querySelector("[data-o=tol]").oninput = debounce((e) => { s.tol = e.target.value.trim(); route(); }, 450);
     root.querySelectorAll("[data-facet] input").forEach((i) => (i.onchange = () => {
       const k = i.closest("[data-facet]").dataset.facet;
@@ -1192,23 +1238,81 @@ async function viewSearch(el, stale) {
 
 /* ───────────────────── settings ───────────────────── */
 
+function dialog(title, html) {
+  $("#dlgTitle").textContent = title;
+  $("#dlgBody").innerHTML = html;
+  $("#veil").hidden = false;
+  const first = $("#dlgBody input:not([type=file]), #dlgBody textarea");
+  if (first) setTimeout(() => first.focus(), 30);
+}
+const closeDialog = () => { $("#veil").hidden = true; };
+
+const TOKEN_WHY = `A link only says which file to read. Figma gives the file’s data through its API only with a personal access token,
+  the same way it checks your access when you open the file. coloro reads files with your token; it never changes them.
+  Create one in Figma: Settings → Security → Personal access tokens, with read access to file content.`;
+
+function newProjectDialog() {
+  const needToken = !S.st.figma_token;
+  dialog("New project", `
+    <form id="npForm">
+      <div class="f"><span class="label">Project name</span><input class="in" name="name" placeholder="For example, Mobile app" maxlength="80" required></div>
+      <div class="f"><span class="label">Figma file links</span><textarea class="in" name="links" placeholder="https://www.figma.com/design/…&#10;One link per line"></textarea>
+        <span class="hint">Optional. Files can also be added later with + in the left panel.</span></div>
+      <div class="f"><span class="label">Only pages whose name contains</span><input class="in" name="pages" placeholder="All pages">
+        <span class="hint">For example, ready or release. Separate several words with commas.</span></div>
+      ${needToken ? `<div class="f"><span class="label">Figma access token</span><input class="in" type="password" name="token" placeholder="figd_…" autocomplete="off">
+        <span class="hint">${TOKEN_WHY}</span></div>` : ""}
+      <div class="f"><span class="label">Token library</span><input class="in" type="file" name="lib" accept=".json,.csv,.txt,application/json,text/csv">
+        <span class="hint">Optional. The design system’s color tokens: W3C Design Tokens, Tokens Studio, a variables export or a CSV with name and value columns. With it, coloro finds colors outside the system.</span></div>
+      <div class="acts"><button type="button" class="b quiet" id="npCancel">Cancel</button><button class="b main">Create project</button></div>
+    </form>`);
+  $("#npCancel").onclick = closeDialog;
+  $("#npForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target, btn = f.querySelector(".b.main");
+    btn.disabled = true;
+    try {
+      if (needToken && f.elements.token.value.trim()) await api("/api/figma-token", { token: f.elements.token.value.trim() });
+      const r = await api("/api/projects", { name: f.elements.name.value.trim() });
+      S.project = r.id; S.search = null; save(); syncSearchForm();
+      const pages = f.elements.pages.value.split(",").map((x) => x.trim()).filter(Boolean);
+      const links = f.elements.links.value.split(/\s+/).map((x) => x.trim()).filter(Boolean);
+      const bad = [];
+      for (const url of links) {
+        try { await api("/api/sources", { url, pages, project: r.id }); } catch (err) { bad.push(`${url}: ${err.message}`); }
+      }
+      const lib = f.elements.lib.files[0];
+      if (lib) await api("/api/tokens", { filename: lib.name, text: await lib.text(), project: r.id });
+      closeDialog();
+      toast(`Project created: ${f.elements.name.value.trim()}`, "ok");
+      for (const b of bad) toast(b, "err", true);
+      await refresh();
+      if (links.length > bad.length) {
+        if (S.st.figma_token) startUpdate({ project: r.id });
+        else { toast("Add a Figma access token to load the files", "err"); openSettings(); }
+      } else { setClosed("l", false); }
+    } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+  };
+}
+$("#newProj").onclick = newProjectDialog;
+
 function openSettings() {
   const st = S.st, p = project();
   const t = p.tokens;
-  $("#dlgBody").innerHTML = `
-    <h4>Figma access token</h4>
-    <p>${st.figma_token ? "Set. It is stored only on this computer, in a file readable by your account only." : "Not set. coloro needs it to load files."}
-      Create one in Figma: Settings → Security → Personal access tokens, with read access to files.</p>
+  dialog("Settings", `
+    <h4>Figma access</h4>
+    <p>${st.figma_token ? "<b>Connected.</b> The token is stored only on this computer, in a file readable by your account only." : "<b>Not connected.</b> coloro cannot load files without a token."}</p>
+    <p class="hint">${TOKEN_WHY}</p>
     <div class="row"><input class="in" type="password" id="tok" placeholder="${st.figma_token ? "Paste a new token to replace it" : "figd_…"}" autocomplete="off"><button class="b main" id="saveTok">Save</button></div>
-    <h4>Token library · ${esc(p.name)}</h4>
-    <p>${t.count ? `${esc(t.file)} · ${pl(t.count, "token")} · loaded ${esc(ago(t.loaded_at))}.` : "Not loaded. coloro compares colors with it to find stray colors."}
-      W3C Design Tokens, Tokens Studio, a variables export or a CSV with name and value columns.</p>
-    <div class="row"><input class="in" type="file" id="tfile" accept=".json,.csv,.txt,application/json,text/csv"><button class="b main" id="upTok">Load</button></div>
+    <h4>Token library for ${esc(p.name)}</h4>
+    <p>${t.count ? `<b>${esc(t.file)}</b> · ${pl(t.count, "token")} · loaded ${esc(ago(t.loaded_at))}.` : "<b>Not loaded.</b>"}</p>
+    <p class="hint">The design system’s color tokens. coloro compares every color in the files with them to find near-token, off-system and unbound colors. Each project has its own library. W3C Design Tokens, Tokens Studio, a variables export or a CSV with name and value columns.</p>
+    <div class="row"><input class="in" type="file" id="tfile" accept=".json,.csv,.txt,application/json,text/csv"><button class="b main" id="upTok">${t.count ? "Replace" : "Load"}</button></div>
     <h4>Updates</h4>
-    <div class="row"><span class="grow label">Files downloaded in parallel</span><span style="width:80px">${select("workers", [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, String(n)]), st.settings.workers)}</span></div>
-    <p style="margin-top:6px">More is faster but closer to the Figma rate limit. 4 is a safe default.</p>
-    <div class="row"><button class="b" id="forceAll">Reload all project files from scratch</button></div>`;
-  $("#veil").hidden = false;
+    <div class="row"><span class="grow label">Files downloaded at the same time</span><span style="width:80px">${select("workers", [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, String(n)]), st.settings.workers)}</span></div>
+    <p class="hint" style="margin-top:6px">More is faster but closer to the Figma rate limit. 4 is a safe default.</p>
+    <div class="row"><button class="b" id="forceAll">Reload all files of ${esc(p.name)} from scratch</button></div>
+    <p class="hint" style="margin-top:6px">Normally an update downloads only files and pages that changed. Use this if the data looks wrong.</p>`);
   $("#saveTok").onclick = async () => {
     const v = $("#tok").value.trim();
     if (!v) { toast("Paste the token first", "err"); return; }
@@ -1231,12 +1335,12 @@ function openSettings() {
   $("#forceAll").onclick = () => { $("#veil").hidden = true; startUpdate({ project: S.project, force: true }); };
 }
 $("#gear").onclick = openSettings;
-$("#closeDlg").onclick = () => { $("#veil").hidden = true; };
-$("#veil").onclick = (e) => { if (e.target.id === "veil") $("#veil").hidden = true; };
+$("#closeDlg").onclick = closeDialog;
+$("#veil").onclick = (e) => { if (e.target.id === "veil") closeDialog(); };
 
 /* ───────────────────── start ───────────────────── */
 
-const VIEWS = { overview: viewOverview, colors: viewColors, typography: viewTypography, spacing: viewSpacing, effects: viewEffects,
+const VIEWS = { overview: viewOverview, colors: viewColors, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
   images: viewImages, components: viewComponents, search: viewSearch };
 
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });

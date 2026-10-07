@@ -390,6 +390,10 @@ class Handler(BaseHTTPRequestHandler):
                                  label="COALESCE(n.text, n.name)" if kind == "text" else "n.name")
             res.update(info)
             return self._json(res)
+        if path == "/api/texts":
+            return self._json(search.texts(con, filt, flat.get("q", ""), flat.get("mode", "forms"),
+                                           limit=max(1, min(5000, int(flat.get("limit") or 500))),
+                                           cat=flat.get("cat", "all"), sort=flat.get("sort", "uses")))
         if path == "/api/typography":
             return self._json(remember("typography", lambda: typography.fonts(con, filt)))
         if path == "/api/components":

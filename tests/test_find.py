@@ -88,6 +88,31 @@ class Find(unittest.TestCase):
         _, ids = self.found(q="купить", type="instance")
         self.assertEqual(ids, [])
 
+    def test_exact_phrase_vs_word_forms(self):
+        # «купить монет» в любой форме — находит; точная фраза «100 монет» — тоже;
+        # точная фраза «монет купить» — нет: порядок слов важен.
+        _, ids = self.found(q="монеты купить", where="text")
+        self.assertEqual(ids, ["t1"])
+        _, ids = self.found(q="100 монет", where="text", mode="exact")
+        self.assertEqual(ids, ["t1"])
+        _, ids = self.found(q="монет купить", where="text", mode="exact")
+        self.assertEqual(ids, [])
+
+    def test_several_places_at_once(self):
+        _, ids = self.found(q="кнопка", where=["name"])
+        self.assertEqual(ids, ["b1", "b2"])       # слои с этим названием
+        _, ids = self.found(q="купить", where=["text", "component"])
+        self.assertEqual(ids, ["t1", "t2"])
+
+    def test_texts_inventory(self):
+        d = search.texts(self.con, Filter())
+        by = {i["key"]: i for i in d["items"]}
+        self.assertEqual(by["купить подписку"]["uses"], 1)
+        self.assertEqual(search.texts(self.con, Filter(), "монеты")["total"], 1)
+        cond, args, _ = search.condition("textexact", {"text": "Купить 100 монет"})
+        ids = [i["node_id"] for i in search.layers(self.con, Filter(), cond, args, "K", "s1")["items"]]
+        self.assertEqual(ids, ["t1"])
+
     def test_empty_query_is_an_error(self):
         with self.assertRaises(search.SearchError):
             search.build(self.con, {})
