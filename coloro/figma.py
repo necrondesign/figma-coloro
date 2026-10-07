@@ -160,6 +160,12 @@ class Figma:
         """Имя, версия, дата изменения и страницы. depth=2 — ещё и верхние слои каждой страницы."""
         return self.get_json(f"/files/{key}", {"depth": depth})
 
+    def file_meta(self, key: str) -> dict:
+        """Имя и версия файла без дерева страниц. Лёгкий запрос: на большом файле секунда,
+        когда file_head тащит ещё и все компоненты и стили файла."""
+        d = self.get_json(f"/files/{key}/meta")
+        return d.get("file") or d
+
     def nodes(self, key: str, ids: list[str], depth: int | None = None) -> dict:
         params = {"ids": ",".join(ids)}
         if depth is not None:

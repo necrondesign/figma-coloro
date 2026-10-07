@@ -21,13 +21,11 @@ import re
 from datetime import datetime, timezone
 
 from . import color as colorm
+from . import db as dbm
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS tokens (
-    name TEXT, color TEXT, alpha INTEGER, mode TEXT, collection TEXT
-);
-CREATE INDEX IF NOT EXISTS tokens_value ON tokens (color, alpha);
-"""
+# Таблица токенов создаётся вместе со всей схемой базы (db.SCHEMA). Здесь — пусто, чтобы
+# старые вызовы executescript(tokens.SCHEMA) ничего не ломали.
+SCHEMA = ""
 
 _REF = re.compile(r"^\{([^{}]+)\}$")
 _NAME_COLS = ("name", "token", "имя", "название", "variable", "переменная")
@@ -182,8 +180,7 @@ def parse(text: str, filename: str = "") -> list[tuple]:
 
 
 def store(con, rows: list[tuple], filename: str) -> int:
-    con.executescript(SCHEMA)
-    with con:
+    with dbm.writing(con):
         con.execute("DELETE FROM tokens")
         con.executemany("INSERT INTO tokens VALUES (?, ?, ?, ?, ?)", rows)
         for k, v in (("tokens_file", filename), ("tokens_loaded_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))):
@@ -203,6 +200,10 @@ class Index:
                 names.append(name)
             self.items.append((name, c, a, colorm.lab(c)))
         self.names = sorted({r[0] for r in rows})
+        # Статус цвета зависит только от цвета и справочника — запоминаем: на тысячах цветов
+        # сравнение с каждым токеном по CIEDE2000 занимает секунды.
+        self.classified: dict[tuple[str, int], dict] = {}
+        self.sig = hash(tuple(rows))       # подпись справочника — для памяти результатов
 
     def __bool__(self) -> bool:
         return bool(self.items)
@@ -242,6 +243,15 @@ def _same_colour(self, c: str):
 Index.same_colour = _same_colour
 
 
+_LOADED: dict[tuple, Index] = {}
+
+
 def load(con) -> Index:
-    con.executescript(SCHEMA)
-    return Index(con.execute("SELECT name, color, alpha, mode, collection FROM tokens").fetchall())
+    """Справочник из базы. Пока он не менялся, отдаётся тот же объект — с запомненными статусами."""
+    rows = con.execute("SELECT name, color, alpha, mode, collection FROM tokens ORDER BY 1, 2, 3, 4, 5").fetchall()
+    key = tuple(rows)
+    got = _LOADED.get(key)
+    if got is None:
+        _LOADED.clear()
+        got = _LOADED[key] = Index(rows)
+    return got

@@ -138,6 +138,7 @@ const COLUMNS = [
   { key: "unbound", title: "Не привязаны", hint: "Цвет совпадает с токеном, но набран вручную", cat: "unbound" },
   { key: "raw_pct", title: "Вручную", hint: "Доля применений цвета без токена и стиля", cat: "all", pct: true },
   { key: "text_nostyle_pct", title: "Тексты без стиля", hint: "Доля текстов без текстового стиля — только тех, что положены на экран вручную: внутри компонентов стиль задаёт библиотека", pct: true, href: "#/typography?cat=all" },
+  { key: "scale_off_pct", title: "Мимо шкалы", hint: "Доля отступов, скруглений и обводок, набранных вручную мимо шкалы или почти по ней, — у слоёв, положенных на экран вручную", pct: true, href: "#/spacing" },
   { key: "generic", title: "Безымянные", hint: "Кадры и группы с названием по умолчанию — Frame 12, Group 7 — только положенные на экран вручную: внутри компонентов названия задаёт библиотека" },
 ];
 
@@ -146,7 +147,8 @@ async function viewOverview(el, params, stale) {
   const [st, o] = await Promise.all([api("/api/state"), api("/api/overview" + fq())]);
   if (stale()) return;
   o.files.forEach((f) => (fileNames[f.file_key] = f.name));
-  if (!st.sources.length) {
+  // Пусто — только когда нет ни ссылок, ни данных: файлы могли загрузить и командой coloro load.
+  if (!st.sources.length && !o.files.length) {
     el.innerHTML = `<div class="empty"><b>Добавьте первый файл Figma</b><p>Вставьте ссылку на файл — coloro загрузит его и покажет, что в макетах хорошо, а что нет.</p><a class="b main" href="#/sources">Добавить ссылку</a></div>`;
     return;
   }
@@ -173,6 +175,9 @@ async function viewOverview(el, params, stale) {
       <a class="task" href="#/search?mode=size"><b>Найти размер</b><span>например 56 × 56 с допуском</span></a>
       <a class="task" href="#/search?mode=colour"><b>Найти цвет</b><span>и похожие на него оттенки</span></a>
       <a class="task" href="#/typography"><b>Типографика</b><span>тексты без стиля против системы стилей</span></a>
+      <a class="task" href="#/spacing"><b>Отступы и скругления</b><span>числа мимо шкалы и без переменных</span></a>
+      <a class="task" href="#/effects"><b>Тени и эффекты</b><span>набранные вручную против стилей</span></a>
+      <a class="task" href="#/images"><b>Картинки</b><span>что где стоит и что повторяется</span></a>
       <a class="task" href="#/components"><b>Компоненты</b><span>где стоят, какие варианты, что отвязано</span></a>
     </div>
     <div class="tiles">
@@ -539,6 +544,197 @@ async function viewTypography(el, params, stale) {
   }));
 }
 
+/* ───────────────────── отступы, скругления, обводки ───────────────────── */
+
+const SGROUPS = [
+  { k: "spacing", t: "Отступы", unit: "отступ", what: "отступов и промежутков auto layout" },
+  { k: "radius", t: "Скругления", unit: "скругление", what: "скруглений углов" },
+  { k: "stroke", t: "Обводки", unit: "обводка", what: "толщин обводки" },
+];
+const KIND_NAMES = { gap: "промежуток", padding: "поле", radius: "угол", stroke: "обводка" };
+const num = (v) => String(v).replace(".", ",");
+
+function scaleCats(source) {
+  return [
+    { k: "near", t: "Почти шкала", hint: "До значения шкалы не больше пикселя — обычно след масштабирования или ручного набора. Поправьте на значение шкалы." },
+    { k: "off", t: "Мимо шкалы", hint: "Такого значения в шкале нет. Решите, нужно ли оно, или замените на ближайшее." },
+    source === "variables"
+      ? { k: "unbound", t: "Не привязаны", hint: "Значение есть в шкале, но набрано числом, без переменной. Привяжите переменную — внешне ничего не изменится." }
+      : { k: "ok", t: "На сетке", hint: "Значение ложится на привычную сетку. Переменных для этих чисел в макетах нет, так что привязывать не к чему." },
+    { k: "all", t: "Все", hint: "Все значения, набранные вручную." },
+  ];
+}
+
+function scaleSample(group, v) {
+  const x = Math.min(v, 28);
+  if (group === "radius") return `<span class="psample"><i style="width:22px;height:22px;border:1.5px solid var(--txt);border-radius:${Math.min(v, 11)}px"></i></span>`;
+  if (group === "stroke") return `<span class="psample"><i style="width:22px;height:${Math.min(v, 8)}px;background:var(--txt);border-radius:1px"></i></span>`;
+  return `<span class="psample"><i style="width:${Math.max(2, x)}px;height:14px;background:var(--fair-tx);opacity:.55;border-radius:1px"></i></span>`;
+}
+
+function scaleWhat(i, unit) {
+  if (i.status === "unbound") return '<span class="tag unbound">не привязано</span>значение шкалы, набрано числом';
+  if (i.status === "ok") return '<span class="tag token">на сетке</span>';
+  const tag = i.status === "near" ? '<span class="tag near">почти шкала</span>' : '<span class="tag off">мимо шкалы</span>';
+  return `${tag}ближе всего <b>${num(i.nearest)}</b>`;
+}
+
+async function viewSpacing(el, params, stale) {
+  renderFilters(true);
+  const group = SGROUPS.find((g) => g.k === params.get("g")) || SGROUPS[0];
+  const all = await api("/api/scales" + fq());
+  if (stale()) return;
+  const d = all[group.k];
+  const cats = scaleCats(d.source);
+  const active = cats.find((c) => c.k === params.get("cat")) || cats[0];
+  const counts = Object.fromEntries(cats.map((c) => [c.k, d.items.filter((i) => c.k === "all" || i.status === c.k).reduce((n, i) => n + i.uses, 0)]));
+  const items = d.items.filter((i) => active.k === "all" || i.status === active.k);
+  const t = d.totals;
+  const manual = t.ok + t.unbound + t.near + t.off;
+  const scaleLine = d.source === "variables"
+    ? `Шкала — из переменных, которые уже привязаны в макетах: ${d.scale.map((s) => `<code>${num(s.value)}</code>`).join(" ")}`
+    : group.k === "spacing" ? "Переменных для отступов в макетах нет — сравниваем с привычной сеткой: кратно 4 (и 2)."
+    : group.k === "radius" ? "Переменных для скруглений в макетах нет — сравниваем с сеткой: чётные значения."
+    : "Переменных для обводок в макетах нет — принятыми считаются 0,5 · 1 · 1,5 · 2 · 3 · 4.";
+  el.innerHTML = `
+    <div class="cats">${SGROUPS.map((g) => `<button class="${g.k === group.k ? "on" : ""}" data-g="${g.k}">${g.t}</button>`).join("")}</div>
+    <p class="sub" style="margin-top:0">${scaleLine}<br>
+      Через переменную — ${fmt(t.bound)}, вручную — ${fmt(manual)}${t.pill ? `, ещё ${fmt(t.pill)} ${plural(t.pill, "«таблетка»", "«таблетки»", "«таблеток»")} — скругление в половину стороны, его число неважно` : ""}. Только слои, положенные на экран вручную: внутри компонентов эти числа задаёт библиотека.</p>
+    <div class="cats">${cats.map((c) => `<button class="${c.k === active.k ? "on" : ""}" data-cat="${c.k}">${c.t}<em>${fmt(counts[c.k])}</em></button>`).join("")}</div>
+    <p class="hint">${esc(active.hint)}</p>
+    <div id="plist">${items.length ? "" : '<div class="empty"><b>Здесь пусто</b><p>Под текущими фильтрами таких значений нет.</p></div>'}</div>`;
+  el.querySelectorAll("[data-g]").forEach((b) => (b.onclick = () => (location.hash = `#/spacing?g=${b.dataset.g}`)));
+  el.querySelectorAll("[data-cat]").forEach((b) => (b.onclick = () => (location.hash = `#/spacing?g=${group.k}&cat=${b.dataset.cat}`)));
+  $("#plist").insertAdjacentHTML("beforeend", items.map((i, n) => {
+    const kinds = Object.entries(i.kinds).map(([k, c]) => `${KIND_NAMES[k] || k} ${fmt(c)}`).join(" · ");
+    return `<div class="crow prow" data-n="${n}">${scaleSample(group.k, i.value)}
+      <div class="name">${num(i.value)} px<small>${esc(kinds)}${i.first_seen ? " · с " + esc(day(i.first_seen)) : ""}</small></div>
+      <div class="num">${fmt(i.uses)} <span class="muted">${plural(i.uses, "раз", "раза", "раз")}</span></div>
+      <div class="num c-screens">${fmt(i.screens)} <span class="muted">${plural(i.screens, "экран", "экрана", "экранов")}</span></div>
+      <div class="num c-files">${fmt(i.files)} <span class="muted">${plural(i.files, "файл", "файла", "файлов")}</span></div>
+      <div class="what">${scaleWhat(i, group.unit)}</div></div>`;
+  }).join(""));
+  el.querySelectorAll(".prow").forEach((r) => (r.onclick = () => {
+    const next = r.nextElementSibling;
+    if (next && next.classList.contains("places")) { next.remove(); r.classList.remove("open"); return; }
+    r.classList.add("open");
+    const box = document.createElement("div");
+    box.className = "places";
+    r.after(box);
+    const base = { kind: "prop", group: group.k, value: items[+r.dataset.n].value };
+    screensBlock(box, (offset) => "/api/search" + fq({ ...base, offset }), (g) => "/api/search" + fq({ ...base, file_key: g.file_key, screen: g.screen_id || "" }));
+  }));
+}
+
+/* ───────────────────── эффекты ───────────────────── */
+
+const ECATS = [
+  { k: "unbound", t: "Не привязаны", hint: "Параметры точно как в стиле эффекта, но стиль не назначен. Назначьте стиль — внешне ничего не изменится." },
+  { k: "near", t: "Почти стиль", hint: "Тот же вид и цвет, смещение или размытие отличаются на пиксель-два. Замените на стиль." },
+  { k: "off", t: "Мимо системы", hint: "Такого эффекта в стилях нет. Решите, нужен ли новый стиль, или замените на существующий." },
+  { k: "all", t: "Все", hint: "Все эффекты, набранные вручную." },
+];
+
+function effectSample(e) {
+  const c = e.color ? `rgba(${parseInt(e.color.slice(0, 2), 16)},${parseInt(e.color.slice(2, 4), 16)},${parseInt(e.color.slice(4, 6), 16)},${(e.alpha ?? 100) / 100})` : "rgba(0,0,0,.25)";
+  let style;
+  if (e.type === "DROP_SHADOW") style = `box-shadow:${e.x || 0}px ${e.y || 0}px ${e.radius || 0}px ${e.spread || 0}px ${c}`;
+  else if (e.type === "INNER_SHADOW") style = `box-shadow:inset ${e.x || 0}px ${e.y || 0}px ${e.radius || 0}px ${e.spread || 0}px ${c}`;
+  else style = `filter:blur(${Math.min((e.radius || 0) / 4, 4)}px);background:var(--label)`;
+  return `<span class="esample"><i style="${style}"></i></span>`;
+}
+function effectColour(e) {
+  return e.color ? `<code>#${esc(e.color)}</code>${e.alpha != null && e.alpha < 100 ? " " + e.alpha + "%" : ""}` : "";
+}
+const joinDot = (...parts) => parts.filter(Boolean).join(" · ");
+function effectWhat(i) {
+  if (i.status === "unbound") return `<span class="tag unbound">не привязан</span>как стиль <b>${i.styles.map(esc).join(", ")}</b>`;
+  if (i.status === "near") return `<span class="tag near">почти стиль</span><b>${i.styles.map(esc).join(", ")}</b> — ${esc(i.nearest)}`;
+  return '<span class="tag off">мимо системы</span>';
+}
+
+async function viewEffects(el, params, stale) {
+  renderFilters(true);
+  const d = await api("/api/effects" + fq());
+  if (stale()) return;
+  const active = ECATS.find((c) => c.k === params.get("cat")) || ECATS[0];
+  const counts = Object.fromEntries(ECATS.map((c) => [c.k, d.items.filter((i) => c.k === "all" || i.status === c.k).reduce((n, i) => n + i.uses, 0)]));
+  const items = d.items.filter((i) => active.k === "all" || i.status === active.k);
+  const manual = d.items.reduce((n, i) => n + i.uses, 0);
+  el.innerHTML = `
+    <p class="sub" style="margin-top:0">Тени и размытия. Со стилем — ${fmt(d.totals.styled)}, вручную — ${fmt(manual)}. Система выведена из самих макетов: ${fmt(d.styles.length)} ${plural(d.styles.length, "эффект", "эффекта", "эффектов")} из стилей. Только слои, положенные на экран вручную.</p>
+    <div class="cats">${ECATS.map((c) => `<button class="${c.k === active.k ? "on" : ""}" data-cat="${c.k}">${c.t}<em>${fmt(counts[c.k])}</em></button>`).join("")}</div>
+    <p class="hint">${esc(active.hint)}</p>
+    <div id="elist">${items.length ? "" : '<div class="empty"><b>Здесь пусто</b><p>Под текущими фильтрами таких эффектов нет.</p></div>'}</div>
+    ${d.styles.length ? `<h2>Эффекты из стилей</h2>
+    <div class="styles">${d.styles.map((s) => `<div class="srow">${effectSample(s)}<div class="name">${esc(s.styles.join(", "))}<small>${joinDot(esc(s.label), effectColour(s))}</small></div><div class="num">${fmt(s.uses)}</div></div>`).join("")}</div>` : ""}`;
+  el.querySelectorAll("[data-cat]").forEach((b) => (b.onclick = () => (location.hash = `#/effects?cat=${b.dataset.cat}`)));
+  $("#elist").insertAdjacentHTML("beforeend", items.map((i, n) => `
+    <div class="crow erow" data-n="${n}">${effectSample(i)}
+      <div class="name">${esc(i.label)}<small>${joinDot(effectColour(i), i.first_seen ? "с " + esc(day(i.first_seen)) : "")}</small></div>
+      <div class="num">${fmt(i.uses)} <span class="muted">${plural(i.uses, "слой", "слоя", "слоёв")}</span></div>
+      <div class="num c-screens">${fmt(i.screens)} <span class="muted">${plural(i.screens, "экран", "экрана", "экранов")}</span></div>
+      <div class="num c-files">${fmt(i.files)} <span class="muted">${plural(i.files, "файл", "файла", "файлов")}</span></div>
+      <div class="what">${effectWhat(i)}</div></div>`).join(""));
+  el.querySelectorAll(".erow").forEach((r) => (r.onclick = () => {
+    const next = r.nextElementSibling;
+    if (next && next.classList.contains("places")) { next.remove(); r.classList.remove("open"); return; }
+    r.classList.add("open");
+    const box = document.createElement("div");
+    box.className = "places";
+    r.after(box);
+    const i = items[+r.dataset.n];
+    const base = { kind: "effect", type: i.type, color: i.color ?? "", alpha: i.alpha ?? "", x: i.x ?? "", y: i.y ?? "", radius: i.radius ?? "", spread: i.spread ?? "" };
+    screensBlock(box, (offset) => "/api/search" + fq({ ...base, offset }), (g) => "/api/search" + fq({ ...base, file_key: g.file_key, screen: g.screen_id || "" }));
+  }));
+}
+
+/* ───────────────────── картинки ───────────────────── */
+
+const MODE_NAMES = { FILL: "заполнить", FIT: "вписать", CROP: "обрезать", TILE: "плиткой", STRETCH: "растянуть" };
+
+async function viewImages(el, params, stale) {
+  renderFilters(true);
+  const d = await api("/api/images" + fq());
+  if (stale()) return;
+  if (!d.total) {
+    el.innerHTML = '<div class="empty"><b>Картинок нет</b><p>Под текущими фильтрами ни у одного слоя нет картинки в заливке.</p></div>';
+    return;
+  }
+  el.innerHTML = `
+    <p class="sub" style="margin-top:0">${fmt(d.total)} ${plural(d.total, "картинка", "картинки", "картинок")} в ${fmt(d.total_uses)} ${plural(d.total_uses, "месте", "местах", "местах")}; ${fmt(d.once)} стоят по одному разу. Одна и та же картинка в разных местах — одна строка: так видны и повторы, и забытые заглушки.</p>
+    <div id="ilist">${d.items.map((i, n) => `
+      <div class="crow irow" data-n="${n}"><span class="thumb" data-ref="${esc(i.ref)}" data-file="${esc(i.file_key)}"></span>
+        <div class="name">${esc(i.name)}<small>${i.modes.map((m) => MODE_NAMES[m] || m.toLowerCase()).join(", ")} · до ${fmt(i.max_w)} × ${fmt(i.max_h)}${i.first_seen ? " · с " + esc(day(i.first_seen)) : ""}</small></div>
+        <div class="num">${fmt(i.uses)} <span class="muted">${plural(i.uses, "место", "места", "мест")}</span></div>
+        <div class="num c-screens">${fmt(i.screens)} <span class="muted">${plural(i.screens, "экран", "экрана", "экранов")}</span></div>
+        <div class="num c-files">${fmt(i.files)} <span class="muted">${plural(i.files, "файл", "файла", "файлов")}</span></div>
+        <div class="what">${i.uses > 1 ? `<span class="tag near">повтор</span>одна картинка в ${fmt(i.uses)} ${plural(i.uses, "месте", "местах", "местах")}` : ""}</div></div>`).join("")}</div>
+    ${d.total > d.items.length ? `<p class="muted">Показаны ${fmt(d.items.length)} самых частых из ${fmt(d.total)}.</p>` : ""}`;
+  el.querySelectorAll(".irow").forEach((r) => (r.onclick = () => {
+    const next = r.nextElementSibling;
+    if (next && next.classList.contains("places")) { next.remove(); r.classList.remove("open"); return; }
+    r.classList.add("open");
+    const box = document.createElement("div");
+    box.className = "places";
+    r.after(box);
+    const base = { kind: "image", ref: d.items[+r.dataset.n].ref };
+    screensBlock(box, (offset) => "/api/search" + fq({ ...base, offset }), (g) => "/api/search" + fq({ ...base, file_key: g.file_key, screen: g.screen_id || "" }));
+  }));
+  // Превью — адреса картинок Figma отдаёт по файлу; просим по разу на файл.
+  const byFile = {};
+  el.querySelectorAll(".thumb").forEach((t) => (byFile[t.dataset.file] = byFile[t.dataset.file] || []).push(t));
+  for (const [fk, thumbs] of Object.entries(byFile)) {
+    api("/api/image-urls?file_key=" + encodeURIComponent(fk)).then((r) => {
+      if (stale()) return;
+      thumbs.forEach((t) => {
+        const url = r.urls[t.dataset.ref];
+        if (url) t.innerHTML = `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
+      });
+    }).catch(() => { /* превью — не главное: без него список всё равно полезен */ });
+  }
+}
+
 /* ───────────────────── компоненты ───────────────────── */
 
 async function viewComponents(el, params, stale) {
@@ -679,7 +875,7 @@ async function viewSettings(el, params, stale) {
 
 /* ───────────────────── маршруты ───────────────────── */
 
-const VIEWS = { "": viewOverview, colours: viewColours, search: viewSearch, typography: viewTypography, components: viewComponents, sources: viewSources, settings: viewSettings };
+const VIEWS = { "": viewOverview, colours: viewColours, search: viewSearch, typography: viewTypography, spacing: viewSpacing, effects: viewEffects, images: viewImages, components: viewComponents, sources: viewSources, settings: viewSettings };
 // Номер текущего перехода. Медленный ответ предыдущего экрана не должен затереть уже
 // открытый следующий: общая картина считается дольше, чем открываются цвета.
 let routeSeq = 0;

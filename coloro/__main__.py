@@ -16,6 +16,7 @@ from . import db as dbm
 from . import rules
 from .figma import Figma, FigmaError
 from .load import load_file
+from .textnorm import norm
 
 DEFAULT_DB = Path.home() / ".coloro" / "coloro.sqlite"
 # Второй путь — там токен хранила прежняя версия coloro.
@@ -57,9 +58,9 @@ def summary(con, pages=None, with_hidden=False, with_archive=False) -> dict:
         where.append("pg.archived = 0")
     if not with_hidden:
         where.append("n.hid = 0")
-    pats = [p.strip().lower() for p in (pages or []) if p.strip()]
+    pats = [norm(p) for p in (pages or []) if p.strip()]
     if pats:
-        where.append("(" + " OR ".join("lower(pg.name) LIKE ?" for _ in pats) + ")")
+        where.append("(" + " OR ".join("norm(pg.name) LIKE ?" for _ in pats) + ")")
         args += [f"%{p}%" for p in pats]
     w = " AND ".join(where)
     base = (" FROM paints p JOIN nodes n ON n.file_key = p.file_key AND n.id = p.node_id"
@@ -88,13 +89,13 @@ def summary(con, pages=None, with_hidden=False, with_archive=False) -> dict:
         pw.append("archived = 0")
     pargs = []
     if pats:
-        pw.append("(" + " OR ".join("lower(name) LIKE ?" for _ in pats) + ")")
+        pw.append("(" + " OR ".join("norm(name) LIKE ?" for _ in pats) + ")")
         pargs += [f"%{p}%" for p in pats]
     npages = con.execute("SELECT COUNT(*) FROM pages WHERE " + " AND ".join(pw), pargs).fetchone()[0]
     nw = ["1=1"] + (["pg.archived = 0"] if not with_archive else []) + (["n.hid = 0"] if not with_hidden else [])
     nargs = []
     if pats:
-        nw.append("(" + " OR ".join("lower(pg.name) LIKE ?" for _ in pats) + ")")
+        nw.append("(" + " OR ".join("norm(pg.name) LIKE ?" for _ in pats) + ")")
         nargs += [f"%{p}%" for p in pats]
     layers = con.execute(
         "SELECT COUNT(*) FROM nodes n JOIN pages pg ON pg.file_key = n.file_key AND pg.page_id = n.page_id"

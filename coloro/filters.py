@@ -11,12 +11,19 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-# Таблицы, которые соединяет каждый запрос: краска → слой → страница → файл.
-JOIN = (" JOIN nodes n ON n.file_key = p.file_key AND n.id = p.node_id"
-        " JOIN pages pg ON pg.file_key = n.file_key AND pg.page_id = n.page_id"
-        " JOIN files f ON f.file_key = n.file_key")
+from .textnorm import norm
+
+# Краска → страница → файл. Поля слоя, по которым фильтруют, лежат у самой краски.
+JOIN = (" JOIN pages pg ON pg.file_key = p.file_key AND pg.page_id = p.page_id"
+        " JOIN files f ON f.file_key = p.file_key")
+# Слой → страница → файл.
 NODE_JOIN = (" JOIN pages pg ON pg.file_key = n.file_key AND pg.page_id = n.page_id"
              " JOIN files f ON f.file_key = n.file_key")
+# То же, но слои — внешним циклом. Для запросов, которые проходят по всем слоям: подряд по
+# таблице это в разы быстрее, чем от страниц через индекс с поиском каждого слоя по ключу.
+# На 4,3 млн слоёв поиск текста — 0,6 с вместо 2,9.
+NODE_SCAN = (" CROSS JOIN pages pg ON pg.file_key = n.file_key AND pg.page_id = n.page_id"
+             " CROSS JOIN files f ON f.file_key = n.file_key")
 
 
 def _list(v) -> list[str]:
@@ -61,26 +68,31 @@ class Filter:
     def is_default(self) -> bool:
         return self == Filter()
 
-    def where(self) -> tuple[str, list]:
-        """Условие для запроса, в котором есть n (слои), pg (страницы) и f (файлы)."""
+    def where(self, paints: bool = False) -> tuple[str, list]:
+        """Условие для запроса, в котором есть n (слои), pg (страницы) и f (файлы).
+
+        paints=True — запрос по краскам p без слоёв: поля слоя берутся у краски."""
+        x = "p" if paints else "n"
         w, a = ["1=1"], []
         if not self.hidden:
-            w.append("n.hid = 0")
+            w.append(f"{x}.hid = 0")
         if not self.archive:
             w.append("pg.archived = 0")
         if not self.instances:
-            w.append("n.pinst IS NULL")
+            w.append("p.inst = 0" if paints else "n.pinst IS NULL")
         if self.pages:
-            w.append("(" + " OR ".join("lower(pg.name) LIKE ?" for _ in self.pages) + ")")
-            a += [f"%{p.lower()}%" for p in self.pages]
+            # norm(), а не lower(): встроенная lower() не опускает регистр кириллицы, и
+            # «Служебное» не нашлось бы по «служ».
+            w.append("(" + " OR ".join("norm(pg.name) LIKE ?" for _ in self.pages) + ")")
+            a += [f"%{norm(p)}%" for p in self.pages]
         for s in self.skip_sections:
-            w.append("(n.sect IS NULL OR n.sect NOT IN (SELECT id FROM vals WHERE lower(v) LIKE ?))")
-            a.append(f"%{s.lower()}%")
+            w.append(f"({x}.sect IS NULL OR {x}.sect NOT IN (SELECT id FROM vals WHERE norm(v) LIKE ?))")
+            a.append(f"%{norm(s)}%")
         if self.files:
-            w.append("n.file_key IN (" + ",".join("?" * len(self.files)) + ")")
+            w.append(f"{x}.file_key IN (" + ",".join("?" * len(self.files)) + ")")
             a += self.files
         if self.since:
-            w.append("n.first_seen >= ?")
+            w.append(f"{x}.first_seen >= ?")
             a.append(self.since)
         if self.modified_since:
             w.append("f.last_modified >= ?")

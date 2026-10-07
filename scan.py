@@ -22,8 +22,8 @@ def read_token():
     if env and env.strip():
         return env.strip()
     for path in (BASE + "/token.txt",
-                 os.path.expanduser("~/.config/figma-colors/token"),
-                 os.path.expanduser("~/.config/coloro/token")):
+                 os.path.expanduser("~/.config/coloro/token"),
+                 os.path.expanduser("~/.config/figma-colors/token")):
         try:
             t = open(path, encoding="utf-8").read().strip()
             if t:

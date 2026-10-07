@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 from . import color as colorm
-from .filters import NODE_JOIN, Filter
+from .filters import NODE_JOIN, NODE_SCAN, Filter
 from .inventory import figma_link
 from .textnorm import norm, query_stems
 
@@ -127,6 +127,19 @@ def condition(kind: str, q: dict, con=None) -> tuple[str, list, dict]:
             args += [fk, *ids]
         return "n.type = 'INSTANCE' AND (" + " OR ".join(parts) + ")", args, {}
 
+    if kind == "prop":
+        from . import scales
+        c, a = scales.condition(q)
+        return c, a, {}
+    if kind == "effect":
+        from . import effects
+        c, a = effects.condition(q)
+        return c, a, {}
+    if kind == "image":
+        from . import effects
+        c, a = effects.image_condition(q)
+        return c, a, {}
+
     raise SearchError("неизвестный вид поиска")
 
 
@@ -135,34 +148,35 @@ def screens(con, filt: Filter, cond: str, args: list, limit: int = 60, offset: i
     """Экраны, на которых нашлось, со счётом. Сначала — где больше совпадений.
 
     label — что показывать в строке экрана. Для поиска по тексту это сам текст, а не название
-    слоя: у текстового слоя название часто осталось от старой заглушки, а текст давно другой."""
+    слоя: у текстового слоя название часто осталось от старой заглушки, а текст давно другой.
+
+    Один проход по слоям: группы считаются сразу, итоги и страница результатов — уже из групп.
+    Названия экранов ищутся только для показанной страницы."""
     where, fargs = filt.where()
-    base = (" FROM nodes n" + NODE_JOIN +
-            " LEFT JOIN nodes s ON s.file_key = n.file_key AND s.id = n.screen"
-            f" WHERE {where} AND {cond}")
-    params = fargs + args
-    total_places = con.execute("SELECT COUNT(*)" + base, params).fetchone()[0]
-    total = con.execute("SELECT COUNT(*) FROM (SELECT 1" + base + " GROUP BY n.file_key, n.screen)",
-                        params).fetchone()[0]
-    order = "COUNT(*) DESC, f.name, MIN(pg.position), s.name"
-    extra = []
-    if rank_phrase:
-        # Точное совпадение фразы — выше, чем просто все слова вразброс.
-        order = "SUM(instr(IFNULL(n.tnorm, '') || ' ' || IFNULL(n.nnorm, ''), ?) > 0) DESC, " + order
-        extra = [rank_phrase]
+    rank = "SUM(instr(IFNULL(n.tnorm, '') || ' ' || IFNULL(n.nnorm, ''), ?) > 0)" if rank_phrase else "0"
     rows = con.execute(
-        "SELECT n.file_key, f.name, pg.name, s.name, n.screen, COUNT(*), MIN(n.first_seen),"
-        f" GROUP_CONCAT(DISTINCT replace(substr({label}, 1, 80), ',', char(31)))" + base +
-        f" GROUP BY n.file_key, n.screen ORDER BY {order} LIMIT ? OFFSET ?",
-        params + extra + [limit, offset]).fetchall()
+        f"SELECT n.file_key, n.screen, COUNT(*), MIN(n.first_seen), {rank}, MAX(f.name), MAX(pg.name),"
+        f" MIN(pg.position), GROUP_CONCAT(DISTINCT replace(substr({label}, 1, 80), ',', char(31)))"
+        " FROM nodes n" + NODE_SCAN + f" WHERE {where} AND {cond} GROUP BY n.file_key, n.screen",
+        ([rank_phrase] if rank_phrase else []) + fargs + args).fetchall()
+    total_places = sum(r[2] for r in rows)
+    # Порядок: точное совпадение фразы, потом больше мест, потом файл и страница по порядку.
+    rows.sort(key=lambda r: (-r[4], -r[2], r[5] or "", r[7] or 0, r[1] or ""))
+    page = rows[offset:offset + limit]
+    names = {}
+    for fk, screen, *_ in page:
+        if screen:
+            got = con.execute("SELECT name FROM nodes WHERE file_key = ? AND id = ?", (fk, screen)).fetchone()
+            names[(fk, screen)] = got[0] if got else None
     items = []
-    for fk, fname, pname, sname, screen, count, first, names in rows:
-        layer_names = sorted({x.replace(chr(31), ",") for x in (names or "").split(",") if x})
-        items.append({"file_key": fk, "file": fname, "page": pname, "screen": sname or "без экрана",
+    for fk, screen, count, first, _rank, fname, pname, _pos, layer_list in page:
+        layer_names = sorted({x.replace(chr(31), ",") for x in (layer_list or "").split(",") if x})
+        items.append({"file_key": fk, "file": fname, "page": pname,
+                      "screen": names.get((fk, screen)) or "без экрана",
                       "screen_id": screen, "count": count, "first_seen": first,
                       "layers": layer_names[:4], "more_layers": max(0, len(layer_names) - 4),
                       "link": figma_link(fk, screen)})
-    return {"total": total, "total_places": total_places, "items": items, "limit": limit, "offset": offset}
+    return {"total": len(rows), "total_places": total_places, "items": items, "limit": limit, "offset": offset}
 
 
 def layers(con, filt: Filter, cond: str, args: list, file_key: str, screen: str | None,
@@ -228,10 +242,12 @@ def components(con, filt: Filter, q: str = "") -> dict:
     rows = con.execute(
         "SELECT n.file_key, n.comp, c.name, c.set_id, c.set_name, c.remote,"
         " COUNT(*), SUM(n.ovr), COUNT(DISTINCT n.file_key || '|' || IFNULL(n.screen, ''))"
-        " FROM nodes n" + NODE_JOIN +
+        " FROM nodes n" + NODE_SCAN +
         " LEFT JOIN components c ON c.file_key = n.file_key AND c.id = n.comp"
         f" WHERE n.type = 'INSTANCE' AND {where}"
-        " GROUP BY n.file_key, n.comp", fargs).fetchall()
+        # «+n.comp» — группировка выражением, а не колонкой: иначе SQLite идёт по индексу
+        # компонентов и ищет каждый слой по ключу — на 4,3 млн слоёв 3,8 с вместо 1,2.
+        " GROUP BY n.file_key, +n.comp", fargs).fetchall()
     sets: dict[str, dict] = {}
     for fk, cid, name, sid, sname, remote, count, ovr, scr in rows:
         title = sname or name or "без названия"
@@ -278,7 +294,7 @@ def detached(con, filt: Filter, limit: int = 200) -> dict:
     con.executemany("INSERT OR IGNORE INTO cnames VALUES (?, ?)", names)
     rows = con.execute(
         "SELECT n.file_key, f.name, pg.name, s.name, n.screen, n.id, n.name, n.anchor"
-        " FROM nodes n" + NODE_JOIN +
+        " FROM nodes n" + NODE_SCAN +
         " JOIN cnames c ON c.file_key = n.file_key AND c.nm = n.nnorm"
         " LEFT JOIN nodes s ON s.file_key = n.file_key AND s.id = n.screen"
         f" WHERE n.type IN ('FRAME', 'GROUP') AND n.pinst IS NULL AND n.id != IFNULL(n.screen, '') AND {where}"

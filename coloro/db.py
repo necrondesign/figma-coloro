@@ -10,13 +10,14 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 from .textnorm import norm
 
 # Формат данных. Поднимается, когда меняется то, что извлекается из макета:
 # файлы, загруженные в старом формате, при следующем обновлении перезагружаются.
-FORMAT = 3
+FORMAT = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
@@ -32,9 +33,11 @@ CREATE TABLE IF NOT EXISTS sources (
     pages TEXT, added_at TEXT
 );
 
+-- pages — все страницы файла при последней проверке ([[id, название], …]): по ним видно,
+-- нужно ли что-то докачать, без тяжёлого запроса к Figma.
 CREATE TABLE IF NOT EXISTS files (
     file_key TEXT PRIMARY KEY, name TEXT, version TEXT, last_modified TEXT,
-    checked_at TEXT, loaded_at TEXT, format INTEGER
+    checked_at TEXT, loaded_at TEXT, format INTEGER, pages TEXT
 ) WITHOUT ROWID;
 
 -- status: ok — загружена целиком; failed — не загрузилась, в error причина.
@@ -76,14 +79,14 @@ CREATE INDEX IF NOT EXISTS nodes_page ON nodes (file_key, page_id);
 --           на прозрачность краски (это и есть значение пипетки). У стопа — только его своя.
 --   src   — NULL: задан вручную; «v»: переменная; «s:Название»: стиль
 --   grad  — рецепт градиента (номер в vals) — только у стопов
+-- У краски — копия полей слоя, по которым фильтруют: скрыт ли, внутри ли компонента, секция,
+-- экран, когда появился. Цвета считаются по одной этой таблице, не трогая слои.
 CREATE TABLE IF NOT EXISTS paints (
     file_key TEXT, page_id TEXT, node_id TEXT, slot TEXT, kind TEXT,
-    color TEXT, alpha INTEGER, src TEXT, grad INTEGER
+    color TEXT, alpha INTEGER, src TEXT, grad INTEGER,
+    hid INTEGER, inst INTEGER, sect INTEGER, screen TEXT, first_seen TEXT
 );
 CREATE INDEX IF NOT EXISTS paints_page ON paints (file_key, page_id);
--- Краска по слою: без него каждый запрос с фильтром по слоям перебирал бы все краски файла
--- на каждый слой — на 259 тысячах слоёв это минуты вместо долей секунды.
-CREATE INDEX IF NOT EXISTS paints_node ON paints (file_key, node_id);
 CREATE INDEX IF NOT EXISTS paints_color ON paints (color);
 
 -- Компоненты, на которые ссылаются инстансы файла: имя, набор вариантов, библиотека или свой.
@@ -94,6 +97,31 @@ CREATE TABLE IF NOT EXISTS components (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS nodes_comp ON nodes (file_key, comp);
 
+-- Числа со шкалой: kind — gap | padding | radius | stroke; bound — привязано к переменной.
+CREATE TABLE IF NOT EXISTS props (
+    file_key TEXT, page_id TEXT, node_id TEXT, kind TEXT, value REAL, bound INTEGER
+);
+CREATE INDEX IF NOT EXISTS props_page ON props (file_key, page_id);
+
+-- Тени и размытия: type — DROP_SHADOW | INNER_SHADOW | LAYER_BLUR | BACKGROUND_BLUR.
+CREATE TABLE IF NOT EXISTS effects (
+    file_key TEXT, page_id TEXT, node_id TEXT, type TEXT, color TEXT, alpha INTEGER,
+    x REAL, y REAL, radius REAL, spread REAL, src TEXT
+);
+CREATE INDEX IF NOT EXISTS effects_page ON effects (file_key, page_id);
+
+-- Картинки в заливках: ref — одна и та же картинка в разных местах.
+CREATE TABLE IF NOT EXISTS images (
+    file_key TEXT, page_id TEXT, node_id TEXT, ref TEXT, mode TEXT
+);
+CREATE INDEX IF NOT EXISTS images_page ON images (file_key, page_id);
+
+-- Справочник токенов цвета: загружается из файла дизайн-системы.
+CREATE TABLE IF NOT EXISTS tokens (
+    name TEXT, color TEXT, alpha INTEGER, mode TEXT, collection TEXT
+);
+CREATE INDEX IF NOT EXISTS tokens_value ON tokens (color, alpha);
+
 -- Итоговые числа после каждого обновления: из них стрелки «стало лучше или хуже».
 CREATE TABLE IF NOT EXISTS snapshots (
     taken_at TEXT, file_key TEXT, metrics TEXT,
@@ -103,32 +131,84 @@ CREATE TABLE IF NOT EXISTS snapshots (
 
 # Колонки, добавленные после первого формата: в старой базе их дописываем, а сами данные
 # обновятся при следующей загрузке — формат поднят, и файлы перезагрузятся.
-_ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"), ("ovr", "INTEGER"), ("tnorm", "TEXT"), ("nnorm", "TEXT"))}
+_ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"), ("ovr", "INTEGER"), ("tnorm", "TEXT"), ("nnorm", "TEXT")),
+          "files": (("pages", "TEXT"),),
+          "paints": (("hid", "INTEGER"), ("inst", "INTEGER"), ("sect", "INTEGER"), ("screen", "TEXT"),
+                     ("first_seen", "TEXT"))}
+# Индексы, которые больше не нужны: в старой базе их убираем, чтобы не занимали место.
+_DROPPED = ("paints_node", "props_node", "effects_node", "images_node")
+
+
+# Схема создаётся один раз на путь: несколько потоков, открывших новую базу одновременно,
+# иначе спорят за блокировку на CREATE TABLE.
+_SCHEMA_LOCK = threading.Lock()
+_READY: set[str] = set()
+
+# Запись в базу из параллельных загрузок — по очереди. SQLite и так пускает одного писателя,
+# но ждёт его ограниченное время: большая страница пишется дольше, и следующий поток падал
+# бы с «database is locked». Очередь в самой программе ждёт сколько нужно. Чтение не ждёт.
+WRITE_LOCK = threading.RLock()
+
+
+class writing:
+    """with dbm.writing(con): … — транзакция записи в порядке очереди."""
+
+    def __init__(self, con):
+        self.con = con
+
+    def __enter__(self):
+        WRITE_LOCK.acquire()
+        try:
+            return self.con.__enter__()
+        except BaseException:
+            WRITE_LOCK.release()
+            raise
+
+    def __exit__(self, *exc):
+        try:
+            return self.con.__exit__(*exc)
+        finally:
+            WRITE_LOCK.release()
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(p), timeout=30, check_same_thread=False)
-    # WAL: просмотр не ждёт, пока идёт запись. NORMAL — штатная пара к WAL:
-    # при сбое питания теряется только последняя транзакция, но не целостность.
-    con.execute("PRAGMA journal_mode=WAL")
+    con = sqlite3.connect(str(p), timeout=60, check_same_thread=False)
+    # WAL: просмотр не ждёт, пока идёт запись. Режим хранится в самом файле базы, а его
+    # включение требует исключительного доступа — поэтому только если он ещё не включён:
+    # иначе новое соединение падает, пока другой поток пишет большую страницу.
+    if con.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+        con.execute("PRAGMA journal_mode=WAL")
+    # NORMAL — штатная пара к WAL: при сбое питания теряется только последняя транзакция,
+    # но не целостность.
     con.execute("PRAGMA synchronous=NORMAL")
     con.execute("PRAGMA cache_size=-64000")
     # Встроенная lower() в SQLite не опускает регистр кириллицы: «Кнопка» и «кнопка» для неё
     # разные строки. Своя функция — та же, что строит поисковые колонки при загрузке.
     con.create_function("norm", 1, norm, deterministic=True)
-    con.executescript(SCHEMA)
-    for table, cols in _ADDED.items():
-        have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
-        for col, kind in cols:
-            if col not in have:
-                con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
+    with _SCHEMA_LOCK:
+        if str(p.resolve()) not in _READY:
+            con.executescript(SCHEMA)
+            for table, cols in _ADDED.items():
+                have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+                for col, kind in cols:
+                    if col not in have:
+                        con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
+            for index in _DROPPED:
+                con.execute(f"DROP INDEX IF EXISTS {index}")
+            con.commit()
+            _READY.add(str(p.resolve()))
     try:
         p.chmod(0o600)
     except OSError:
         pass
     return con
+
+
+def path_of(con: sqlite3.Connection) -> str:
+    """Файл, на который открыто соединение, — чтобы открыть рядом ещё одно."""
+    return con.execute("PRAGMA database_list").fetchone()[2]
 
 
 class Interner:
@@ -144,7 +224,11 @@ class Interner:
         got = self.cache.get(value)
         if got is not None:
             return got
-        self.con.execute("INSERT OR IGNORE INTO vals (v) VALUES (?)", (value,))
-        got = self.con.execute("SELECT id FROM vals WHERE v = ?", (value,)).fetchone()[0]
+        # Отдельная короткая запись сразу с фиксацией: словарь пополняется во время скачивания
+        # страницы, и открытая транзакция держала бы базу минутами — параллельные загрузки
+        # других файлов упирались бы в «database is locked».
+        with writing(self.con):
+            self.con.execute("INSERT OR IGNORE INTO vals (v) VALUES (?)", (value,))
+            got = self.con.execute("SELECT id FROM vals WHERE v = ?", (value,)).fetchone()[0]
         self.cache[value] = got
         return got

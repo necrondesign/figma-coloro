@@ -174,6 +174,12 @@ class FakeFigma:
         d["version"] = self.version
         return d
 
+    def file_meta(self, key):
+        self.calls.append(("meta",))
+        if getattr(self, "no_meta", False):
+            raise FigmaError("not_found", "файл не найден — проверьте ссылку и доступ", 404)
+        return {"name": "File", "version": self.version}
+
     def nodes(self, key, ids, depth=None):
         self.calls.append(("nodes", tuple(ids), depth))
         if self.fail_ids & set(ids):
@@ -185,7 +191,7 @@ class FakeFigma:
             n = copy.deepcopy(idx[i])
             if depth == 1:
                 n["children"] = [{k: v for k, v in c.items() if k != "children"} for c in n.get("children") or []]
-            res[i] = {"document": n, "styles": {}}
+            res[i] = {"document": n, "styles": dict(getattr(self, "styles", {}))}
             stack = [n]
             while stack:
                 m = stack.pop()
@@ -242,7 +248,32 @@ class Load(unittest.TestCase):
         f.calls.clear()
         rep = load_file(self.con, f, "K")
         self.assertEqual(rep["status"], "unchanged")
-        self.assertEqual(f.calls, [("head", 1)])      # только лёгкий запрос версии
+        self.assertEqual(f.calls, [("meta",)])        # только лёгкий запрос версии
+
+    def test_unchanged_without_meta_falls_back(self):
+        f = FakeFigma([page("1:1", "Stage 1", [frame("a")])])
+        load_file(self.con, f, "K")
+        f.calls.clear()
+        f.no_meta = True
+        rep = load_file(self.con, f, "K")
+        self.assertEqual(rep["status"], "unchanged")
+        self.assertEqual(f.calls, [("meta",), ("head", 1)])
+
+    def test_new_version_seen_through_meta(self):
+        f = FakeFigma([page("1:1", "Stage 1", [frame("a")])])
+        load_file(self.con, f, "K")
+        f.version = "v2"
+        rep = load_file(self.con, f, "K")
+        self.assertEqual(rep["pages_loaded"], ["Stage 1"])
+
+    def test_widened_pages_load_the_new_page(self):
+        # Версия та же, но теперь нужна страница, которую раньше пропускали: её надо докачать.
+        f = FakeFigma([page("1:1", "Stage 1", [frame("a")]), page("2:2", "Draft", [frame("b")])])
+        load_file(self.con, f, "K", ["stage"])
+        rep = load_file(self.con, f, "K", ["stage", "draft"])
+        self.assertEqual(rep["pages_loaded"], ["Draft"])
+        rep = load_file(self.con, f, "K", ["stage", "draft"])
+        self.assertEqual(rep["status"], "unchanged")
 
     def test_failed_page_keeps_old_data_and_others_load(self):
         f = FakeFigma([page("1:1", "Stage 1", [frame("a")]), page("2:2", "Stage 2", [frame("b")])])

@@ -24,16 +24,20 @@ from .tokens import Index
 
 RARE = 2   # столько применений и меньше — цвет «редкий», скорее всего опечатка
 
-# Уникальные применения: сплошная краска — каждая; стоп градиента — один раз на цвет внутри
-# одного градиента (два одинаковых стопа — одно применение цвета).
-_USES = ("SELECT DISTINCT CASE WHEN p.kind = 'solid' THEN p.rowid END AS rid,"
-         " p.file_key, p.node_id, p.slot, p.kind, p.color, p.alpha, p.src, p.grad,"
-         " n.screen, n.first_seen FROM paints p" + JOIN + " WHERE ")
+# Краска со слоем — для мест, где нужны название и тип слоя.
+_WITH_NODE = " JOIN nodes n ON n.file_key = p.file_key AND n.id = p.node_id"
 
 
 def classify(c: str, a: int, idx: Index) -> dict:
     if not idx:
         return {"status": "none", "tokens": [], "nearest": None}
+    got = idx.classified.get((c, a))
+    if got is None:
+        got = idx.classified[(c, a)] = _classify(c, a, idx)
+    return got
+
+
+def _classify(c: str, a: int, idx: Index) -> dict:
     names = idx.exact(c, a)
     if names:
         return {"status": "token", "tokens": names, "nearest": None}
@@ -56,17 +60,37 @@ def classify(c: str, a: int, idx: Index) -> dict:
     return {"status": "off", "tokens": [], "nearest": nearest}
 
 
-def colours(con, filt: Filter, idx: Index) -> list[dict]:
+def aggregate(con, filt: Filter) -> list[tuple]:
+    """Применения цвета по файлам — один проход по краскам, без слоев.
+
+    Повторные стопы одного градиента схлопнуты ещё при загрузке, так что каждая строка
+    краски — одно применение цвета. Из этих строк собираются и общий список цветов, и
+    числа по файлам на общей картине."""
+    where, args = filt.where(paints=True)
+    return con.execute(
+        # COUNT(CASE …), а не SUM(условие): при пустом src сравнение даёт NULL, и сумма — тоже.
+        "SELECT p.file_key, p.color, p.alpha, COUNT(*), COUNT(CASE WHEN p.kind = 'solid' THEN 1 END),"
+        " COUNT(CASE WHEN p.kind = 'stop' THEN 1 END), COUNT(CASE WHEN p.src IS NULL THEN 1 END),"
+        " COUNT(CASE WHEN p.src = 'v' THEN 1 END), COUNT(CASE WHEN p.src LIKE 's:%' THEN 1 END),"
+        " COUNT(DISTINCT IFNULL(p.screen, '')), MIN(p.first_seen)"
+        " FROM paints p" + JOIN + f" WHERE {where} GROUP BY p.file_key, p.color, p.alpha", args).fetchall()
+
+
+def colours(con, filt: Filter, idx: Index, rows: list[tuple] | None = None) -> list[dict]:
     """Все цвета под фильтром, от самых частых к редким, со статусом относительно токенов."""
-    where, args = filt.where()
-    rows = con.execute(
-        "WITH u AS (" + _USES + where + ")"
-        " SELECT color, alpha, COUNT(*), SUM(kind = 'solid'), SUM(kind = 'stop'),"
-        " SUM(src IS NULL), SUM(src = 'v'), SUM(src LIKE 's:%'),"
-        " COUNT(DISTINCT file_key), COUNT(DISTINCT file_key || '|' || IFNULL(screen, '')), MIN(first_seen)"
-        " FROM u GROUP BY color, alpha ORDER BY 3 DESC, 1", args).fetchall()
+    acc: dict[tuple, list] = {}
+    for fk, c, a, uses, flat, grad, raw, var, sty, screens, first in (rows if rows is not None else aggregate(con, filt)):
+        m = acc.get((c, a))
+        if m is None:
+            acc[(c, a)] = [uses, flat, grad, raw, var, sty, 1, screens, first]
+            continue
+        for i, v in enumerate((uses, flat, grad, raw, var, sty, 1, screens)):
+            m[i] += v
+        if first and (not m[8] or first < m[8]):
+            m[8] = first
     out = []
-    for c, a, uses, flat, grad, raw, var, sty, files, screens, first in rows:
+    for (c, a), (uses, flat, grad, raw, var, sty, files, screens, first) in sorted(
+            acc.items(), key=lambda kv: (-kv[1][0], kv[0][0], kv[0][1])):
         item = {"color": c, "alpha": a, "label": colorm.label(c, a), "family": colorm.family(c),
                 "uses": uses, "flat": flat, "grad": grad, "raw": raw, "var": var, "style": sty,
                 "files": files, "screens": screens, "first_seen": first,
@@ -102,21 +126,24 @@ def screens(con, filt: Filter, c: str, a: int, limit: int = 60, offset: int = 0)
     """Где лежит цвет — по экранам: дизайнер думает экранами, а не слоями.
 
     Цвет из двух прямоугольников на сотне вариантов экрана — это сотня строк «экран — сколько
-    мест — какие слои», а не двести строк с одинаковыми именами."""
-    where, args = filt.where()
-    base = (" FROM paints p" + JOIN +
-            " LEFT JOIN nodes s ON s.file_key = n.file_key AND s.id = n.screen"
-            " WHERE p.color = ? AND p.alpha = ? AND " + where)
-    params = [c, a] + args
-    total_places = con.execute("SELECT COUNT(*)" + base, params).fetchone()[0]
-    total = con.execute("SELECT COUNT(*) FROM (SELECT 1" + base + " GROUP BY n.file_key, n.screen)", params).fetchone()[0]
+    мест — какие слои», а не двести строк с одинаковыми именами. Один запрос: итоги считаются
+    из групп, названия экранов — только для показанной страницы."""
+    where, args = filt.where(paints=True)
     rows = con.execute(
-        "SELECT n.file_key, f.name, pg.name, s.name, n.screen, COUNT(*), MIN(n.first_seen),"
-        " GROUP_CONCAT(DISTINCT replace(n.name, ',', char(31))), SUM(p.src IS NULL), SUM(n.hid), MAX(pg.archived)" + base +
-        " GROUP BY n.file_key, n.screen ORDER BY f.name, MIN(pg.position), s.name LIMIT ? OFFSET ?",
-        params + [limit, offset]).fetchall()
+        "SELECT p.file_key, p.screen, COUNT(*), MIN(p.first_seen), MAX(f.name), MAX(pg.name), MIN(pg.position),"
+        " GROUP_CONCAT(DISTINCT replace(n.name, ',', char(31))), COUNT(CASE WHEN p.src IS NULL THEN 1 END),"
+        " SUM(p.hid), MAX(pg.archived)"
+        " FROM paints p" + _WITH_NODE + JOIN +
+        f" WHERE p.color = ? AND p.alpha = ? AND {where} GROUP BY p.file_key, p.screen",
+        [c, a] + args).fetchall()
+    rows.sort(key=lambda r: (r[4] or "", r[6] or 0, r[1] or ""))
+    page = rows[offset:offset + limit]
     groups = []
-    for fk, fname, pname, sname, screen, count, first, names, raw, hid, archived in rows:
+    for fk, screen, count, first, fname, pname, _pos, names, raw, hid, archived in page:
+        sname = None
+        if screen:
+            got = con.execute("SELECT name FROM nodes WHERE file_key = ? AND id = ?", (fk, screen)).fetchone()
+            sname = got[0] if got else None
         layer_names = sorted({x.replace(chr(31), ",") for x in (names or "").split(",") if x})
         groups.append({
             "file_key": fk, "file": fname, "page": pname, "screen": sname or "без экрана", "screen_id": screen,
@@ -124,15 +151,16 @@ def screens(con, filt: Filter, c: str, a: int, limit: int = 60, offset: int = 0)
             "more_layers": max(0, len(layer_names) - 4), "hidden": bool(hid), "archived": bool(archived),
             "link": figma_link(fk, screen),
         })
-    return {"total": total, "total_places": total_places, "items": groups, "limit": limit, "offset": offset}
+    return {"total": len(rows), "total_places": sum(r[2] for r in rows), "items": groups,
+            "limit": limit, "offset": offset}
 
 
 def places(con, filt: Filter, c: str, a: int, limit: int = 200, offset: int = 0,
            file_key: str | None = None, screen: str | None = None) -> dict:
     """Где лежит цвет: файл, страница, экран, слой — и ссылка прямо на слой.
     С file_key и screen — только слои одного экрана."""
-    where, args = filt.where()
-    base = (" FROM paints p" + JOIN +
+    where, args = filt.where(paints=True)
+    base = (" FROM paints p" + _WITH_NODE + JOIN +
             " LEFT JOIN nodes s ON s.file_key = n.file_key AND s.id = n.screen"
             " LEFT JOIN vals sv ON sv.id = n.sect"
             " WHERE p.color = ? AND p.alpha = ? AND " + where)

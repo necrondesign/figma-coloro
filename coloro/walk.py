@@ -44,6 +44,9 @@ class Out:
     nodes: list[tuple] = field(default_factory=list)
     paints: list[tuple] = field(default_factory=list)
     components: dict = field(default_factory=dict)
+    props: list[tuple] = field(default_factory=list)     # отступы, скругления, толщина обводки
+    effects: list[tuple] = field(default_factory=list)   # тени и размытия
+    images: list[tuple] = field(default_factory=list)    # картинки в заливках
 
 
 def _hex(c: dict) -> str:
@@ -108,12 +111,75 @@ def paints_of(node: dict, styles: dict, intern) -> list[tuple]:
                 # градиенты собираются вместе, а разные — нет.
                 recipe = t + ":" + "→".join(f"{_hex(s['color'])}@{_pct(s['color'].get('a', 1))}" for s in stops)
                 gid = intern(recipe)
+                seen = set()
                 for s in stops:
                     c = s["color"]
+                    # Два одинаковых стопа в одном градиенте — одно применение цвета.
+                    key = (_hex(c), _pct(c.get("a", 1)))
+                    if key in seen:
+                        continue
+                    seen.add(key)
                     var = (s.get("boundVariables") or {}).get("color")
                     # У стопа — только его собственная прозрачность. Прозрачность краски
                     # целиком к цвету стопа не относится.
                     out.append((slot, "stop", _hex(c), _pct(c.get("a", 1)), style_src or ("v" if var else None), gid))
+    return out
+
+
+def _px(v):
+    return round(float(v), 2) if isinstance(v, (int, float)) else None
+
+
+def props_of(node: dict) -> list[tuple]:
+    """Числа, у которых в дизайн-системе обычно есть шкала: отступы, скругления, обводка.
+
+    → (вид, величина, привязана ли к переменной). Нули не пишутся: отсутствие отступа —
+    это не отступ мимо шкалы."""
+    out = []
+    bv = node.get("boundVariables") or {}
+    if node.get("layoutMode") in ("HORIZONTAL", "VERTICAL"):
+        # При «Space between» промежуток считает сама Figma, записанное число не применяется.
+        if node.get("primaryAxisAlignItems") != "SPACE_BETWEEN":
+            out.append(("gap", _px(node.get("itemSpacing")), bool(bv.get("itemSpacing"))))
+        if node.get("layoutWrap") == "WRAP" and node.get("counterAxisAlignContent") != "SPACE_BETWEEN":
+            out.append(("gap", _px(node.get("counterAxisSpacing")), bool(bv.get("counterAxisSpacing"))))
+        for side in ("Top", "Right", "Bottom", "Left"):
+            out.append(("padding", _px(node.get("padding" + side)), bool(bv.get("padding" + side))))
+    radii = node.get("rectangleCornerRadii")
+    corner_keys = ("topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius")
+    if isinstance(radii, list) and len(radii) == 4 and len(set(radii)) > 1:
+        for k, r in zip(corner_keys, radii):
+            out.append(("radius", _px(r), bool(bv.get(k))))
+    elif isinstance(node.get("cornerRadius"), (int, float)):
+        out.append(("radius", _px(node["cornerRadius"]), any(bv.get(k) for k in corner_keys + ("cornerRadius",))))
+    strokes = node.get("strokes")
+    if isinstance(strokes, list) and any(isinstance(p, dict) and p.get("visible") is not False for p in strokes):
+        out.append(("stroke", _px(node.get("strokeWeight")), bool(bv.get("strokeWeight"))))
+    return [p for p in out if p[1]]
+
+
+def effects_of(node: dict, styles: dict) -> list[tuple]:
+    """Тени и размытия → (вид, цвет, прозрачность, x, y, размытие, разлёт, источник)."""
+    out = []
+    sid = (node.get("styles") or {}).get("effect")
+    style_src = "s:" + _style_name(styles, sid) if sid else None
+    for e in node.get("effects") or []:
+        if not isinstance(e, dict) or e.get("visible") is False:
+            continue
+        c = e.get("color")
+        off = e.get("offset") or {}
+        var = (e.get("boundVariables") or {}).get("color")
+        out.append((e.get("type") or "", _hex(c) if c else None, _pct(c.get("a", 1)) if c else None,
+                    _px(off.get("x")), _px(off.get("y")), _px(e.get("radius")), _px(e.get("spread")),
+                    style_src or ("v" if var else None)))
+    return out
+
+
+def images_of(node: dict) -> list[tuple]:
+    out = []
+    for p in node.get("fills") or []:
+        if isinstance(p, dict) and p.get("type") == "IMAGE" and p.get("visible") is not False:
+            out.append((p.get("imageRef") or "", p.get("scaleMode") or ""))
     return out
 
 
@@ -165,8 +231,21 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
             norm(node.get("characters")) if is_text else None,
             norm(name),
         ))
+        row = out.nodes[-1]
+        # Поля фильтров — прямо у краски: тогда цвета считаются без обращения к слоям,
+        # а это на миллионах слоёв разница в разы.
+        tail = (row[6], 1 if pinst else 0, row[7], screen, row[17])
         for p in paints_of(node, styles, intern):
-            out.paints.append((ctx.file_key, ctx.page_id, nid, *p))
+            out.paints.append((ctx.file_key, ctx.page_id, nid, *p, *tail))
+        # Отступы и эффекты сверяются только у положенного на экран вручную: внутри компонента
+        # их задаёт библиотека. Хранить их там — 93% строк впустую.
+        if pinst is None and ntype != "INSTANCE":
+            for p in props_of(node):
+                out.props.append((ctx.file_key, ctx.page_id, nid, *p))
+            for e in effects_of(node, styles):
+                out.effects.append((ctx.file_key, ctx.page_id, nid, *e))
+        for im in images_of(node):
+            out.images.append((ctx.file_key, ctx.page_id, nid, *im))
         if not children and node is root:
             continue
         kids = node.get("children") or []

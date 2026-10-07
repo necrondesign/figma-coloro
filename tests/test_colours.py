@@ -126,6 +126,72 @@ class Stray(unittest.TestCase):
         self.assertIsNotNone(health.overview(self.con, Filter(), self.idx)["trend"])
 
 
+class FiltersOnPaints(unittest.TestCase):
+    """Поля фильтров у краски — копия полей слоя. Каждый фильтр на цветах обязан работать."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.con = dbm.connect(Path(self.tmp.name) / "t.sqlite")
+        y = {"r": 1, "g": 1, "b": 0, "a": 1}
+        grad = {"type": "GRADIENT_LINEAR", "gradientStops": [
+            {"position": 0, "color": y}, {"position": 0.5, "color": y},
+            {"position": 1, "color": {"r": 0, "g": 0, "b": 0, "a": 1}}]}
+        tree = [page("1:1", "Stage", [
+            node("sec", "SECTION", "Служебное", children=[node("f0", "FRAME", children=[node("r", fills=[solid(1, 0, 0)])])]),
+            node("s1", "FRAME", "Экран", children=[
+                node("g", fills=[solid(0, 1, 0)]),
+                node("i", "INSTANCE", "Кнопка", children=[node("b", fills=[solid(0, 0, 1)])]),
+                node("gr", fills=[grad]),
+            ])])]
+        for key in ("K1", "K2"):
+            load_file(self.con, FakeFigma(tree), key)
+
+    def tearDown(self):
+        self.con.close()
+        self.tmp.cleanup()
+
+    def uses(self, **kw):
+        return {i["color"]: i["uses"] for i in inventory.colours(self.con, Filter(**kw), tokens.Index([]))}
+
+    def test_two_files_sum(self):
+        items = {i["color"]: i for i in inventory.colours(self.con, Filter(), tokens.Index([]))}
+        r = items["FF0000"]
+        self.assertEqual((r["uses"], r["files"], r["screens"], r["raw"], r["var"], r["style"]), (2, 2, 2, 2, 0, 0))
+
+    def test_repeated_stop_counts_once(self):
+        self.assertEqual(self.uses()["FFFF00"], 2)            # по одному на файл, а не по два
+
+    def test_instances(self):
+        self.assertIn("0000FF", self.uses())
+        self.assertNotIn("0000FF", self.uses(instances=False))
+        self.assertEqual(inventory.screens(self.con, Filter(instances=False), "0000FF", 100)["total_places"], 0)
+
+    def test_sections(self):
+        self.assertNotIn("FF0000", self.uses(skip_sections=["служ"]))
+        self.assertIn("00FF00", self.uses(skip_sections=["служ"]))
+
+    def test_files_and_since(self):
+        self.assertEqual(self.uses(files=["K1"])["FF0000"], 1)
+        self.assertEqual(self.uses(since="2999-01-01"), {})
+
+    def test_remembered_overview_follows_data(self):
+        # Ответ запоминается, но любое изменение данных — новый файл, другой справочник —
+        # даёт новый ответ, а не старый из памяти.
+        first = health.overview(self.con, Filter(), tokens.Index([]))["totals"]["uses"]
+        self.assertEqual(health.overview(self.con, Filter(), tokens.Index([]))["totals"]["uses"], first)
+        tree = [page("1:1", "Stage", [node("s9", "FRAME", children=[node("x", fills=[solid(1, 0, 0)])])])]
+        load_file(self.con, FakeFigma(tree), "K3")
+        self.assertEqual(health.overview(self.con, Filter(), tokens.Index([]))["totals"]["uses"], first + 1)
+        tokens.store(self.con, tokens.parse("name,value\nred,#FF0000\n"), "t.csv")
+        idx = tokens.load(self.con)
+        self.assertEqual(health.overview(self.con, Filter(), idx)["totals"]["unbound"], 1)
+
+    def test_overview_matches_list(self):
+        o = health.overview(self.con, Filter(), tokens.Index([]))
+        self.assertEqual(o["totals"]["uses"], sum(self.uses().values()))
+        self.assertEqual(sum(f["metrics"]["uses"] for f in o["files"]), o["totals"]["uses"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

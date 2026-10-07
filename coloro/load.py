@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -31,7 +32,7 @@ BATCH = 8          # верхних слоёв страницы в одном з
 MAX_DEPTH = 40     # насколько глубоко можно раскрывать один слой, если он не скачивается целиком
 
 NODE_COLS = 23
-PAINT_COLS = 9
+PAINT_COLS = 14
 
 
 class Stopped(Exception):
@@ -91,11 +92,16 @@ def _collect_components(entry: dict, out: Out) -> None:
 
 def _write_page(con, key: str, page: dict, position: int, version: str, out: Out, now: str) -> None:
     pid = page["id"]
-    with con:
+    with dbm.writing(con):
         con.execute("DELETE FROM nodes WHERE file_key = ? AND page_id = ?", (key, pid))
         con.execute("DELETE FROM paints WHERE file_key = ? AND page_id = ?", (key, pid))
+        for table in ("props", "effects", "images"):
+            con.execute(f"DELETE FROM {table} WHERE file_key = ? AND page_id = ?", (key, pid))
         con.executemany(f"INSERT OR REPLACE INTO nodes VALUES ({','.join('?' * NODE_COLS)})", out.nodes)
         con.executemany(f"INSERT INTO paints VALUES ({','.join('?' * PAINT_COLS)})", out.paints)
+        con.executemany("INSERT INTO props VALUES (?, ?, ?, ?, ?, ?)", out.props)
+        con.executemany("INSERT INTO effects VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", out.effects)
+        con.executemany("INSERT INTO images VALUES (?, ?, ?, ?, ?)", out.images)
         con.executemany("INSERT OR REPLACE INTO components VALUES (?, ?, ?, ?, ?, ?, ?)",
                         [(key, *c) for c in out.components.values()])
         con.execute(
@@ -107,7 +113,7 @@ def _write_page(con, key: str, page: dict, position: int, version: str, out: Out
 
 def _mark_failed(con, key: str, page: dict, position: int, error: str) -> None:
     # Прежняя версия страницы и её данные остаются: следующее обновление попробует снова.
-    with con:
+    with dbm.writing(con):
         con.execute(
             "INSERT INTO pages (file_key, page_id, name, archived, position, status, error)"
             " VALUES (?, ?, ?, ?, ?, 'failed', ?)"
@@ -117,8 +123,39 @@ def _mark_failed(con, key: str, page: dict, position: int, error: str) -> None:
              position, error))
 
 
+def _unchanged(con, figma: Figma, key: str, page_patterns, now: str, report: dict) -> bool:
+    """Быстрая проверка: версия файла та же и все нужные страницы уже лежат в базе.
+
+    Спрашивает у Figma только версию (лёгкий запрос). Если сказать наверняка нельзя — нет
+    списка страниц, другой формат, Figma не отдала версию — возвращает False, и файл
+    проверяется обычным путём."""
+    got = con.execute("SELECT version, format, pages, name FROM files WHERE file_key = ?", (key,)).fetchone()
+    if not got or got[1] != dbm.FORMAT or not got[2] or not got[0]:
+        return False
+    version, _fmt, pages_json, name = got
+    try:
+        meta = figma.file_meta(key)
+    except FigmaError:
+        return False                       # нет такого запроса или доступа — обычным путём
+    if str(meta.get("version") or "") != version:
+        return False
+    stored = {pid: (st, ver) for pid, st, ver in
+              con.execute("SELECT page_id, status, version FROM pages WHERE file_key = ?", (key,))}
+    for pid, pname in json.loads(pages_json):
+        if not rules.name_matches(pname, page_patterns):
+            report["pages_skipped"].append(pname)
+            continue
+        if stored.get(pid) != ("ok", version):
+            return False                   # страницу ещё не качали или она не догрузилась
+    report["name"] = meta.get("name") or name or key
+    with dbm.writing(con):
+        con.execute("UPDATE files SET checked_at = ?, name = ? WHERE file_key = ?", (now, report["name"], key))
+    report["status"] = "unchanged"
+    return True
+
+
 def load_file(con, figma: Figma, key: str, page_patterns=None, force: bool = False,
-              stop: threading.Event | None = None, progress=None) -> dict:
+              stop: threading.Event | None = None, progress=None, analyze: bool = True) -> dict:
     """Загружает один файл. Возвращает отчёт: что загружено, что пропущено и почему."""
     report = {"file_key": key, "name": None, "status": "ok", "pages_loaded": [], "pages_failed": [],
               "pages_skipped": [], "nodes": 0, "seconds": 0.0}
@@ -126,21 +163,26 @@ def load_file(con, figma: Figma, key: str, page_patterns=None, force: bool = Fal
     now = _now()
     say = progress or (lambda **_: None)
 
+    if not force and _unchanged(con, figma, key, page_patterns, now, report):
+        report["seconds"] = round(time.monotonic() - t0, 1)
+        return report
+
     head = figma.file_head(key, depth=1)
     version = str(head.get("version") or "")
     report["name"] = head.get("name") or key
     pages = [p for p in (head.get("document") or {}).get("children") or [] if p.get("type") == "CANVAS"]
-    with con:
+    with dbm.writing(con):
         con.execute(
-            "INSERT INTO files (file_key, name, version, last_modified, checked_at) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO files (file_key, name, version, last_modified, checked_at, pages) VALUES (?, ?, ?, ?, ?, ?)"
             " ON CONFLICT (file_key) DO UPDATE SET name = excluded.name, version = excluded.version,"
-            " last_modified = excluded.last_modified, checked_at = excluded.checked_at",
-            (key, report["name"], version, head.get("lastModified"), now))
+            " last_modified = excluded.last_modified, checked_at = excluded.checked_at, pages = excluded.pages",
+            (key, report["name"], version, head.get("lastModified"), now,
+             json.dumps([[p.get("id"), p.get("name") or ""] for p in pages], ensure_ascii=False)))
         # Страницы, которых в файле больше нет, уходят из базы вместе с их слоями.
         alive = {p["id"] for p in pages}
         for (pid,) in con.execute("SELECT page_id FROM pages WHERE file_key = ?", (key,)).fetchall():
             if pid not in alive:
-                for table in ("nodes", "paints", "pages"):
+                for table in ("nodes", "paints", "pages", "props", "effects", "images"):
                     con.execute(f"DELETE FROM {table} WHERE file_key = ? AND page_id = ?", (key, pid))
 
     fmt = (con.execute("SELECT format FROM files WHERE file_key = ?", (key,)).fetchone() or [None])[0]
@@ -186,12 +228,13 @@ def load_file(con, figma: Figma, key: str, page_patterns=None, force: bool = Fal
     if report["status"] == "ok" and report["pages_failed"]:
         report["status"] = "partial"
     if report["status"] == "ok":
-        with con:
+        with dbm.writing(con):
             con.execute("UPDATE files SET loaded_at = ?, format = ? WHERE file_key = ?", (now, dbm.FORMAT, key))
-    if report["pages_loaded"]:
+    if analyze and report["pages_loaded"]:
         # Статистика для планировщика запросов: без неё SQLite выбирает порядок соединения
         # таблиц вслепую и на больших базах может ошибиться на порядки.
-        con.execute("ANALYZE")
+        with dbm.WRITE_LOCK:
+            con.execute("ANALYZE")
     if not todo and report["status"] == "ok":
         report["status"] = "unchanged"
     report["seconds"] = round(time.monotonic() - t0, 1)
@@ -219,11 +262,21 @@ def update_all(db_path: str | Path, token: str, sources: list[dict], workers: in
         key, pats = item
         con = dbm.connect(db_path)
         try:
-            return load_file(con, figma, key, pats, force=force, stop=stop, progress=progress)
+            return load_file(con, figma, key, pats, force=force, stop=stop, progress=progress, analyze=False)
         except FigmaError as e:
-            return {"file_key": key, "status": "failed", "error": str(e)}
+            return {"file_key": key, "name": None, "status": "failed", "error": str(e), "pages_loaded": [],
+                    "pages_failed": [], "pages_skipped": [], "nodes": 0, "seconds": 0.0}
         finally:
             con.close()
 
     with ThreadPoolExecutor(max_workers=max(1, min(8, workers))) as pool:
-        return list(pool.map(one, merged.items()))
+        reports = list(pool.map(one, merged.items()))
+    # Статистику для планировщика — один раз в конце, а не после каждого файла.
+    if any(r.get("pages_loaded") for r in reports):
+        con = dbm.connect(db_path)
+        try:
+            with dbm.WRITE_LOCK:
+                con.execute("ANALYZE")
+        finally:
+            con.close()
+    return reports

@@ -15,7 +15,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from . import inventory
+from . import db as dbm
+from . import inventory, memo, scales
 from .filters import NODE_JOIN, Filter
 from .tokens import Index
 
@@ -27,10 +28,11 @@ LEVELS = {
     "unbound": (1, 5),            # цветов со значением токена, но набранных вручную
     "text_nostyle_pct": (5, 20),  # доля текстов без текстового стиля
     "generic": (5, 20),           # кадров и групп с названием по умолчанию
+    "scale_off_pct": (5, 20),     # доля отступов, скруглений и обводок мимо шкалы
 }
 
 # Метрики, по которым уровень не считается: чем больше, тем не хуже.
-INFO = ("uses", "colours", "texts", "layers")
+INFO = ("uses", "colours", "texts", "layers", "props")
 
 # Названия, которые Figma даёт контейнерам сама.
 _GENERIC = ("Frame", "Group", "Section")
@@ -71,16 +73,11 @@ def _node_counts(con, filt: Filter) -> dict[str, dict]:
     return out
 
 
-def _colour_counts(con, filt: Filter, idx: Index) -> dict[str, dict]:
-    """По каждому файлу: применения, цвета, вручную, левые — одним запросом."""
-    where, args = filt.where()
-    rows = con.execute(
-        "WITH u AS (" + inventory._USES + where + ")"
-        " SELECT file_key, color, alpha, COUNT(*), SUM(src IS NULL) FROM u GROUP BY file_key, color, alpha",
-        args).fetchall()
+def _colour_counts(rows: list[tuple], idx: Index) -> dict[str, dict]:
+    """По каждому файлу: применения, цвета, вручную, левые — из общего прохода по краскам."""
     cls: dict[tuple, dict] = {}
     out: dict[str, dict] = {}
-    for fk, c, a, uses, raw in rows:
+    for fk, c, a, uses, _flat, _grad, raw, *_ in rows:
         k = (c, a)
         if k not in cls:
             cls[k] = inventory.classify(c, a, idx)
@@ -112,6 +109,9 @@ def _metrics(colour: dict, nodes: dict, idx: Index) -> dict:
         "text_nostyle": nodes.get("text_nostyle", 0),
         "text_nostyle_pct": _pct(nodes.get("text_nostyle", 0), nodes.get("texts", 0)),
         "generic": nodes.get("generic", 0),
+        "props": nodes.get("props", 0),
+        "scale_off": nodes.get("scale_off", 0),
+        "scale_off_pct": _pct(nodes.get("scale_off", 0), nodes.get("props", 0)),
     }
     # Без справочника токенов «левые» не определить — честнее не показать, чем показать ноль.
     if idx:
@@ -125,6 +125,13 @@ def _metrics(colour: dict, nodes: dict, idx: Index) -> dict:
 
 
 def overview(con, filt: Filter, idx: Index) -> dict:
+    """Общая картина. Тяжёлая часть запоминается до следующего изменения данных, стрелки
+    изменений — из снимков, они считаются каждый раз заново и мгновенно."""
+    base = memo.cached(con, "overview", [filt.to_dict(), idx.sig], lambda: _overview(con, filt, idx))
+    return {**base, "trend": _trend(con) if filt.is_default() else None}
+
+
+def _overview(con, filt: Filter, idx: Index) -> dict:
     files = {fk: {"file_key": fk, "name": name, "last_modified": lm, "loaded_at": la}
              for fk, name, lm, la in con.execute("SELECT file_key, name, last_modified, loaded_at FROM files")}
     if filt.files:
@@ -133,8 +140,11 @@ def overview(con, filt: Filter, idx: Index) -> dict:
     for fk, ok, failed in con.execute(
             "SELECT file_key, SUM(status = 'ok'), SUM(status = 'failed') FROM pages GROUP BY file_key"):
         pages[fk] = {"ok": ok or 0, "failed": failed or 0}
-    colour = _colour_counts(con, filt, idx)
+    paint_rows = inventory.aggregate(con, filt)
+    colour = _colour_counts(paint_rows, idx)
     nodes = _node_counts(con, filt)
+    for fk, m in scales.per_file(con, filt).items():
+        nodes.setdefault(fk, {}).update(m)
     rows = []
     for fk, f in files.items():
         f["pages"] = pages.get(fk, {"ok": 0, "failed": 0})
@@ -149,18 +159,16 @@ def overview(con, filt: Filter, idx: Index) -> dict:
     for m in colour.values():
         for k in all_c:
             all_c[k] += m.get(k, 0)
-    items = inventory.colours(con, filt, idx)
+    items = inventory.colours(con, filt, idx, paint_rows)
     all_c["colours"] = len(items)
     st = inventory.stray(items)
     for k in ("near", "alpha", "off", "unbound"):
         all_c[k] = len(st[k])
-    all_n = {k: sum(n.get(k, 0) for n in nodes.values()) for k in ("layers", "texts", "text_nostyle", "generic")}
+    all_n = {k: sum(n.get(k, 0) for n in nodes.values()) for k in ("layers", "texts", "text_nostyle", "generic", "props", "scale_off")}
     totals = _metrics(all_c, all_n, idx)
     totals["bound_pct"] = None if not totals["uses"] else round(100 - (totals["raw_pct"] or 0), 1)
 
-    trend = _trend(con) if filt.is_default() else None
-    return {"filter": filt.to_dict(), "tokens": bool(idx), "totals": totals, "files": rows,
-            "levels": LEVELS, "trend": trend}
+    return {"filter": filt.to_dict(), "tokens": bool(idx), "totals": totals, "files": rows, "levels": LEVELS}
 
 
 # ---------------------------------------------------------------- история
@@ -169,7 +177,7 @@ def snapshot(con, idx: Index) -> str:
     """Записывает числа по каждому файлу при фильтрах по умолчанию. Вызывается после обновления."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     data = overview(con, Filter(), idx)
-    with con:
+    with dbm.writing(con):
         for f in data["files"]:
             m = {k: v for k, v in f["metrics"].items() if k != "levels"}
             con.execute("INSERT OR REPLACE INTO snapshots VALUES (?, ?, ?)", (now, f["file_key"], json.dumps(m)))

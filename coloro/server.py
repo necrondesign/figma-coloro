@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import os
 import mimetypes
 import threading
 import time
@@ -23,7 +24,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import db as dbm
-from . import health, inventory, rules, search, tokens, typography
+from . import effects, health, inventory, memo, rules, scales, search, tokens, typography
+from .figma import Figma, FigmaError
 from .filters import Filter
 from .load import update_all
 from .textnorm import norm
@@ -40,7 +42,39 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# Адреса картинок Figma отдаёт на файл целиком и на время — кэш, чтобы не просить заново
+# при каждом открытии экрана.
+_IMAGE_URLS: dict[str, tuple[float, dict]] = {}
+_IMAGE_LOCK = threading.Lock()
+_IMAGE_TTL = 3600
+# Экран картинок просит адреса сразу по всем файлам — к Figma пускаем не больше трёх разом.
+_IMAGE_GATE = threading.Semaphore(3)
+
+
+def image_urls(file_key: str) -> dict:
+    with _IMAGE_LOCK:
+        got = _IMAGE_URLS.get(file_key)
+        if got and time.time() - got[0] < _IMAGE_TTL:
+            return got[1]
+    token = read_token()
+    if not token:
+        raise ValueError("нужен токен Figma — его можно задать в настройках")
+    with _IMAGE_GATE:
+        with _IMAGE_LOCK:
+            got = _IMAGE_URLS.get(file_key)       # пока ждали очереди, мог принести другой запрос
+            if got and time.time() - got[0] < _IMAGE_TTL:
+                return got[1]
+        urls = (Figma(token).get_json(f"/files/{file_key}/images").get("meta") or {}).get("images") or {}
+    with _IMAGE_LOCK:
+        _IMAGE_URLS[file_key] = (time.time(), urls)
+    return urls
+
+
 def read_token() -> str:
+    # Переменная окружения — как у команды load: удобно, когда токен лежит в другом месте.
+    env = os.environ.get("FIGMA_TOKEN", "").strip()
+    if env:
+        return env
     for p in (TOKEN_PATH, LEGACY_TOKEN):
         if p.exists():
             t = p.read_text(encoding="utf-8").strip()
@@ -139,21 +173,21 @@ def state(con) -> dict:
 def add_source(con, url: str, pages) -> dict:
     key, node = rules.parse_link(url)
     pats = [p.strip() for p in (pages or []) if p and p.strip()] or None
-    with con:
+    with dbm.writing(con):
         con.execute("INSERT OR IGNORE INTO sources (url, file_key, node_id, pages, added_at) VALUES (?, ?, ?, ?, ?)",
                     (url.strip(), key, node, json.dumps(pats) if pats else None, _now()))
     return {"file_key": key}
 
 
 def remove_source(con, sid: int) -> None:
-    with con:
+    with dbm.writing(con):
         row = con.execute("SELECT file_key FROM sources WHERE id = ?", (sid,)).fetchone()
         if not row:
             return
         con.execute("DELETE FROM sources WHERE id = ?", (sid,))
         # Данные файла уходят, только если на него больше не ведёт ни одна ссылка.
         if not con.execute("SELECT 1 FROM sources WHERE file_key = ?", row).fetchone():
-            for table in ("nodes", "paints", "pages", "files", "snapshots", "components"):
+            for table in ("nodes", "paints", "pages", "files", "snapshots", "components", "props", "effects", "images"):
                 con.execute(f"DELETE FROM {table} WHERE file_key = ?", row)
 
 
@@ -219,8 +253,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(state(con))
                 if u.path == "/api/overview":
                     return self._json(health.overview(con, filt, idx))
+                fkey = [filt.to_dict(), idx.sig]
+
+                def remember(name, compute, *extra):
+                    return memo.cached(con, name, fkey + list(extra), compute)
+
                 if u.path == "/api/colours":
-                    items = inventory.colours(con, filt, idx)
+                    items = remember("colours", lambda: inventory.colours(con, filt, idx))
                     st = inventory.stray(items)
                     return self._json({"tokens": bool(idx), "items": items,
                                        "counts": {k: len(v) for k, v in st.items()}})
@@ -237,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
                     flat = {k: v[0] for k, v in q.items()}
                     kind = flat.get("kind", "text")
                     if kind == "colour":
-                        items = inventory.colours(con, filt, idx)
+                        items = remember("colours", lambda: inventory.colours(con, filt, idx))
                         return self._json({"items": search.colour_matches(items, flat.get("hex", ""), float(flat.get("tol") or 3))})
                     cond, args, info = search.condition(kind, flat, con)
                     if flat.get("file_key"):
@@ -248,14 +287,28 @@ class Handler(BaseHTTPRequestHandler):
                     res.update(info)
                     return self._json(res)
                 if u.path == "/api/typography":
-                    return self._json(typography.fonts(con, filt))
+                    return self._json(remember("typography", lambda: typography.fonts(con, filt)))
                 if u.path == "/api/components":
-                    return self._json(search.components(con, filt, (q.get("q") or [""])[0]))
+                    cq = (q.get("q") or [""])[0]
+                    return self._json(remember("components", lambda: search.components(con, filt, cq), cq))
                 if u.path == "/api/detached":
-                    return self._json(search.detached(con, filt))
+                    return self._json(remember("detached", lambda: search.detached(con, filt)))
+                if u.path == "/api/scales":
+                    return self._json(remember("scales", lambda: scales.report(con, filt)))
+                if u.path == "/api/effects":
+                    return self._json(remember("effects", lambda: effects.report(con, filt)))
+                if u.path == "/api/images":
+                    return self._json(remember("images", lambda: effects.images(con, filt)))
+                if u.path == "/api/image-urls":
+                    fk = (q.get("file_key") or [""])[0]
+                    if not con.execute("SELECT 1 FROM files WHERE file_key = ?", (fk,)).fetchone():
+                        return self._error("нет такого файла", 404)
+                    return self._json({"urls": image_urls(fk)})
                 return self._error("нет такого адреса", 404)
             except ValueError as e:
                 return self._error(str(e))
+            except FigmaError as e:
+                return self._error(str(e), 502)
             finally:
                 con.close()
         return self._static(u.path)
