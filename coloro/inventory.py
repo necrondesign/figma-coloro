@@ -82,23 +82,50 @@ def colours(con, filt: Filter, idx: Index, rows: list[tuple] | None = None) -> l
     for fk, c, a, uses, flat, grad, raw, var, sty, screens, first in (rows if rows is not None else aggregate(con, filt)):
         m = acc.get((c, a))
         if m is None:
-            acc[(c, a)] = [uses, flat, grad, raw, var, sty, 1, screens, first]
+            acc[(c, a)] = [uses, flat, grad, raw, var, sty, 1, screens, first, [fk]]
             continue
         for i, v in enumerate((uses, flat, grad, raw, var, sty, 1, screens)):
             m[i] += v
         if first and (not m[8] or first < m[8]):
             m[8] = first
+        m[9].append(fk)
     out = []
-    for (c, a), (uses, flat, grad, raw, var, sty, files, screens, first) in sorted(
+    for (c, a), (uses, flat, grad, raw, var, sty, files, screens, first, keys) in sorted(
             acc.items(), key=lambda kv: (-kv[1][0], kv[0][0], kv[0][1])):
         item = {"color": c, "alpha": a, "label": colorm.label(c, a), "family": colorm.family(c),
+                "lightness": round(colorm.lab(c)[0], 1),
                 "uses": uses, "flat": flat, "grad": grad, "raw": raw, "var": var, "style": sty,
-                "files": files, "screens": screens, "first_seen": first,
+                "files": files, "screens": screens, "first_seen": first, "file_keys": keys,
                 "rare": uses <= RARE}
         item.update(classify(c, a, idx))
         # Значение токена, но где-то набрано вручную — привязать.
         item["unbound"] = item["status"] == "token" and raw > 0
         out.append(item)
+    return out
+
+
+def gradients(con, filt: Filter) -> list[dict]:
+    """Градиенты как рецепты: вид и стопы по порядку. Одинаковый рецепт в разных местах — одна строка.
+
+    Применение — краска слоя (заливка или обводка), а не каждый её стоп."""
+    where, args = filt.where(paints=True)
+    rows = con.execute(
+        "SELECT p.grad, v.v, COUNT(DISTINCT p.file_key || '|' || p.node_id || '|' || p.slot),"
+        " COUNT(DISTINCT p.file_key), COUNT(DISTINCT p.file_key || '|' || IFNULL(p.screen, '')),"
+        " COUNT(DISTINCT CASE WHEN p.src IS NULL THEN p.file_key || '|' || p.node_id END), MIN(p.first_seen)"
+        " FROM paints p JOIN vals v ON v.id = p.grad" + JOIN +
+        f" WHERE p.kind = 'stop' AND {where} GROUP BY p.grad", args).fetchall()
+    out = []
+    for gid, recipe, uses, files, screens, raw, first in rows:
+        kind, _, stops = (recipe or "").partition(":")
+        parsed = []
+        for s in stops.split("→"):
+            c, _, a = s.partition("@")
+            if c:
+                parsed.append({"color": c, "alpha": int(a or 100)})
+        out.append({"id": gid, "kind": kind.replace("GRADIENT_", "").lower(), "stops": parsed,
+                    "uses": uses, "files": files, "screens": screens, "raw": raw, "first_seen": first})
+    out.sort(key=lambda g: (-g["uses"], g["id"]))
     return out
 
 
@@ -146,7 +173,7 @@ def screens(con, filt: Filter, c: str, a: int, limit: int = 60, offset: int = 0)
             sname = got[0] if got else None
         layer_names = sorted({x.replace(chr(31), ",") for x in (names or "").split(",") if x})
         groups.append({
-            "file_key": fk, "file": fname, "page": pname, "screen": sname or "без экрана", "screen_id": screen,
+            "file_key": fk, "file": fname, "page": pname, "screen": sname or "No screen", "screen_id": screen,
             "count": count, "raw": raw, "first_seen": first, "layers": layer_names[:4],
             "more_layers": max(0, len(layer_names) - 4), "hidden": bool(hid), "archived": bool(archived),
             "link": figma_link(fk, screen),

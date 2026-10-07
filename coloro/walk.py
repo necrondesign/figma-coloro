@@ -69,7 +69,7 @@ def _num(v) -> str:
 
 
 def _style_name(styles: dict, sid) -> str:
-    return ((styles.get(sid) or {}).get("name") or "без названия") if sid else ""
+    return ((styles.get(sid) or {}).get("name") or "Untitled") if sid else ""
 
 
 # Какие ключи в node.styles говорят о стиле ЦВЕТА у заливки и у обводки.

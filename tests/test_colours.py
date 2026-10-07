@@ -200,7 +200,7 @@ class FiltersOnPaints(unittest.TestCase):
         self.assertTrue(html.startswith("<!DOCTYPE html>"))
         self.assertNotIn("<script", html)                       # без скриптов и внешних файлов
         self.assertNotIn("src=", html)
-        self.assertIn("Общая картина", html)
+        self.assertIn("Overview", html)
         self.assertIn("https://www.figma.com/design/K1/", html)  # ссылки прямо на экраны
 
     def test_overview_matches_list(self):

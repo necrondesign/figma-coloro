@@ -30,7 +30,7 @@ def read_token() -> str:
     for p in TOKEN_FILES:
         if p.exists():
             return p.read_text(encoding="utf-8").strip()
-    sys.exit("Нет токена Figma: положите его в ~/.config/coloro/token или в переменную FIGMA_TOKEN")
+    sys.exit("No Figma access token: put it in ~/.config/coloro/token or the FIGMA_TOKEN variable")
 
 
 def cmd_load(a) -> None:
@@ -44,11 +44,11 @@ def cmd_load(a) -> None:
     try:
         rep = load_file(con, Figma(read_token()), key, pats, force=a.force, progress=progress)
     except FigmaError as e:
-        sys.exit(f"Не загрузилось: {e}")
-    print(f"{rep['name']}: {rep['status']}, страниц {len(rep['pages_loaded'])}, слоёв {rep['nodes']}, "
-          f"{rep['seconds']} с")
+        sys.exit(f"Load failed: {e}")
+    print(f"{rep['name']}: {rep['status']}, {len(rep['pages_loaded'])} pages, {rep['nodes']} layers, "
+          f"{rep['seconds']} s")
     for f in rep["pages_failed"]:
-        print(f"  не загрузилась «{f['page']}»: {f['error']}")
+        print(f"  page failed: {f['page']}: {f['error']}")
 
 
 def summary(con, pages=None, with_hidden=False, with_archive=False) -> dict:
@@ -101,9 +101,9 @@ def summary(con, pages=None, with_hidden=False, with_archive=False) -> dict:
         "SELECT COUNT(*) FROM nodes n JOIN pages pg ON pg.file_key = n.file_key AND pg.page_id = n.page_id"
         " WHERE " + " AND ".join(nw), nargs).fetchone()[0]
     recipes = con.execute("SELECT COUNT(DISTINCT p.grad)" + base + " AND p.kind = 'stop'", args).fetchone()[0]
-    return {"страниц": npages, "слоёв": layers, "уникальных цветов": len(colors),
-            "применений": flat + grad, "в заливках и обводках": flat, "в градиентах": grad,
-            "рецептов градиентов": recipes, "набрано руками": raw}
+    return {"pages": npages, "layers": layers, "unique colors": len(colors),
+            "uses": flat + grad, "in fills and strokes": flat, "in gradients": grad,
+            "gradient recipes": recipes, "set by hand": raw}
 
 
 def cmd_stats(a) -> None:

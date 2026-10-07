@@ -126,7 +126,7 @@ def _from_csv(text: str) -> list[tuple]:
     head = [h.strip().lower() for h in rows[0]]
     name_i = next((i for i, h in enumerate(head) if h in _NAME_COLS), None)
     if name_i is None:
-        raise TokensError("в CSV не нашлось колонки с именем токена (name, token или «Имя»)")
+        raise TokensError("The CSV has no token name column (name, token or Имя)")
     value_is = [i for i, h in enumerate(head)
                 if i != name_i and any(x in h for x in _VALUE_HINTS) and h not in _SKIP_VALUE]
     type_i = next((i for i, h in enumerate(head) if h in ("тип", "type")), None)
@@ -153,12 +153,12 @@ def parse(text: str, filename: str = "") -> list[tuple]:
     """Текст справочника → [(имя, RRGGBB, прозрачность, режим, коллекция)]."""
     s = (text or "").strip()
     if not s:
-        raise TokensError("файл пустой")
+        raise TokensError("The file is empty")
     if s[:1] in "{[":
         try:
             data = json.loads(s)
         except ValueError as e:
-            raise TokensError("файл похож на JSON, но не разбирается") from e
+            raise TokensError("The file looks like JSON but cannot be read") from e
         if isinstance(data, list):
             rows = _from_list(data)
         elif isinstance(data, dict) and isinstance(data.get("variables"), list):
@@ -175,16 +175,22 @@ def parse(text: str, filename: str = "") -> list[tuple]:
             seen.add(row)
             uniq.append(row)
     if not uniq:
-        raise TokensError("цветовых токенов в файле не нашлось")
+        raise TokensError("No color tokens found in the file")
     return uniq
 
 
-def store(con, rows: list[tuple], filename: str) -> int:
+def store(con, rows: list[tuple], filename: str, project: int | None = None) -> int:
+    """Справочник проекта целиком заменяется новым файлом."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with dbm.writing(con):
-        con.execute("DELETE FROM tokens")
-        con.executemany("INSERT INTO tokens VALUES (?, ?, ?, ?, ?)", rows)
-        for k, v in (("tokens_file", filename), ("tokens_loaded_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))):
-            con.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (k, v))
+        con.execute("DELETE FROM tokens WHERE project_id IS ?", (project,))
+        con.executemany("INSERT INTO tokens (name, color, alpha, mode, collection, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+                        [(*r, project) for r in rows])
+        if project is not None:
+            con.execute("UPDATE projects SET tokens_file = ?, tokens_loaded_at = ? WHERE id = ?", (filename, now, project))
+        else:
+            for k, v in (("tokens_file", filename), ("tokens_loaded_at", now)):
+                con.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (k, v))
     return len(rows)
 
 
@@ -246,12 +252,33 @@ Index.same_colour = _same_colour
 _LOADED: dict[tuple, Index] = {}
 
 
-def load(con) -> Index:
-    """Справочник из базы. Пока он не менялся, отдаётся тот же объект — с запомненными статусами."""
-    rows = con.execute("SELECT name, color, alpha, mode, collection FROM tokens ORDER BY 1, 2, 3, 4, 5").fetchall()
-    key = tuple(rows)
+def load(con, project: int | None = None) -> Index:
+    """Справочник проекта. Пока он не менялся, отдаётся тот же объект — с запомненными статусами."""
+    rows = con.execute("SELECT name, color, alpha, mode, collection FROM tokens WHERE project_id IS ?"
+                       " ORDER BY 1, 2, 3, 4, 5", (project,)).fetchall()
+    key = (project, tuple(rows))
     got = _LOADED.get(key)
     if got is None:
-        _LOADED.clear()
+        if len(_LOADED) > 16:
+            _LOADED.clear()
         got = _LOADED[key] = Index(rows)
     return got
+
+
+def usage(idx: Index, colours: list[dict]) -> list[dict]:
+    """Токены справочника против макетов: сколько раз значение токена встречается и сколько из
+    этого набрано вручную. Токены, которых в макетах нет совсем, — кандидаты на удаление
+    или признак, что макеты живут своей жизнью.
+
+    Какой именно переменной привязан цвет, Figma отдаёт только на тарифе Enterprise, поэтому
+    счёт — по значению: все применения цвета, равного значению токена."""
+    by_value = {(c["color"], c["alpha"]): c for c in colours}
+    out = []
+    for name, c, a, _lab in idx.items:
+        used = by_value.get((c, a))
+        out.append({"name": name, "color": c, "alpha": a, "uses": used["uses"] if used else 0,
+                     "raw": used["raw"] if used else 0, "files": used["files"] if used else 0,
+                     "screens": used["screens"] if used else 0,
+                     "shared": len(idx.exact(c, a)) > 1})
+    out.sort(key=lambda t: (-t["uses"], t["name"]))
+    return out

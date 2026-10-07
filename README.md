@@ -7,21 +7,39 @@ straight to the layer that needs fixing. Works with any files and any design sys
 
 ## What it does
 
+**Projects.** Each product gets its own project: its own files, token library and history.
+Projects never mix, and the same file can belong to several of them.
+
+The interface is three floating panels: projects and files on the left (a checkbox includes a
+file, a click on its name shows only that file, each file can be updated, opened in Figma or
+limited to some pages), what to look at and what to include on the right, results and search in
+the middle. The panels collapse into buttons that keep showing progress and errors; on a narrow
+screen they open as dropdowns.
+
 **The overall picture.** The main screen: how much colour goes through tokens and styles, how
 many stray colours, texts without a style, spacing off the scale, unnamed frames. Below it, a
 files × problems map: worst files first, each cell coloured good, needs work or bad. Click a
 cell to see the places. Arrows and a "how it changed" chart show whether things got better.
 
-**Colours.** Every colour actually in use, split by what to do about it:
+**Colours.** Every colour actually in use (sorted by uses, files, lightness or family, filtered by
+family, searchable by hex, token and file), split by what to do about it:
 - *almost a token* — indistinguishable by eye, swap for the token;
 - *different opacity* — a token's colour at another opacity: needs a token for that opacity;
 - *off the system* — far from every token: add it to the system or replace it;
 - *not bound* — a token's value typed by hand: bind it, nothing changes visually.
 
-Colour difference is CIEDE2000, the way the eye sees it.
+Colour difference is CIEDE2000, the way the eye sees it. Next to it: **gradients** as recipes
+(type and stops in order) and **tokens**, showing which tokens of the library are used in the
+files and which are never used.
 
-**Search.** Text in any word form and any order, size with a tolerance, a colour and the shades
-close to it. Results are screens with a count; open a screen to see the layers with links.
+**Search.** One bar at the top: text in any word form and order, in text layers, layer names and
+component names (then every instance is found); width and height with a tolerance; a colour with a
+picker, eyedropper, opacity and tolerance. The parts combine: "Buy" + 56 × 56 + pink finds exactly
+those buttons. Results are screens with a count; a screen opens its layers with links and details
+on hover (size, font, colours and where each colour comes from). On the right, filters over the
+results with counts: type, component, variant properties (Size, State…), page. Every list copies
+with links in one click, ready for a ticket or a message. The search lives in the address, so it
+can be bookmarked and shared.
 
 **Typography.** Texts without a style against the system of styles: exactly a style, almost a
 style, off the system — with what exactly the system is missing.
@@ -51,9 +69,10 @@ python3 -m coloro serve
 
 A browser opens. Then:
 
-1. **Settings** — paste a Figma token (Figma → Settings → Security → Personal access tokens,
-   file read access) and, if you have one, the token reference file.
-2. **Sources** — paste links to files. Pages can be limited by words in their names.
+1. **Settings (the gear)** — paste a Figma token (Figma → Settings → Security → Personal access
+   tokens, file read access) and, if you have one, the project's token library.
+2. **+ in the left panel (Add file)** — paste a link to a file. Pages can be limited by words in
+   their names. A new project is in the project menu at the top left.
 3. **Update.** The first load of a big file takes minutes, an update with no changes takes
    seconds: coloro asks Figma only for the file version and downloads changed pages only.
 

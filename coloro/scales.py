@@ -121,11 +121,11 @@ def condition(q: dict) -> tuple[str, list]:
     """Слои, у которых в группе есть это значение, набранное вручную, — для поиска мест."""
     group = q.get("group") or "spacing"
     if group not in GROUPS:
-        raise ValueError("неизвестная группа")
+        raise ValueError("Unknown group")
     try:
         value = round(float(q.get("value")), 2)
     except (TypeError, ValueError):
-        raise ValueError("значение — число")
+        raise ValueError("The value must be a number")
     kinds = GROUPS[group]
     cond = (f"{MANUAL} AND (n.file_key, n.id) IN (SELECT p.file_key, p.node_id FROM props p"
             f" WHERE p.kind IN ({','.join('?' * len(kinds))}) AND p.value = ? AND p.bound = 0)")

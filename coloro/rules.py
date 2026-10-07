@@ -48,7 +48,7 @@ def parse_link(url: str) -> tuple[str, str | None]:
     host = (u.netloc or "").lower()
     # Ссылка на чужой сайт — не файл Figma, даже если её путь похож на ключ.
     if host and not (host == "figma.com" or host.endswith(".figma.com")):
-        raise LinkError("это не ссылка на Figma")
+        raise LinkError("This is not a Figma link")
     parts = [p for p in u.path.split("/") if p]
     key = None
     for i, p in enumerate(parts):
@@ -61,7 +61,7 @@ def parse_link(url: str) -> tuple[str, str | None]:
     if not key and len(parts) == 1 and _KEY_RE.match(parts[0]):
         key = parts[0]
     if not key or not _KEY_RE.match(key):
-        raise LinkError("это не похоже на ссылку на файл Figma")
+        raise LinkError("This does not look like a Figma file link")
     node = (parse_qs(u.query).get("node-id") or [None])[0]
     if node:
         node = node.replace("-", ":")

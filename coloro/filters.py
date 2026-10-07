@@ -16,14 +16,21 @@ from .textnorm import norm
 # Краска → страница → файл. Поля слоя, по которым фильтруют, лежат у самой краски.
 JOIN = (" JOIN pages pg ON pg.file_key = p.file_key AND pg.page_id = p.page_id"
         " JOIN files f ON f.file_key = p.file_key")
-# Слой → страница → файл.
-NODE_JOIN = (" JOIN pages pg ON pg.file_key = n.file_key AND pg.page_id = n.page_id"
-             " JOIN files f ON f.file_key = n.file_key")
-# То же, но слои — внешним циклом. Для запросов, которые проходят по всем слоям: подряд по
-# таблице это в разы быстрее, чем от страниц через индекс с поиском каждого слоя по ключу.
-# На 4,3 млн слоёв поиск текста — 0,6 с вместо 2,9.
+# Слой → страница → файл, и слои всегда внешним циклом (CROSS JOIN фиксирует порядок).
+# Иначе SQLite любит идти от маленькой таблицы страниц через индекс и искать каждый слой по
+# ключу — на 4,3 млн слоёв это в 3–5 раз медленнее, чем пройти таблицу подряд: поиск текста
+# 2,9 с против 0,6, типографика с фильтром по проекту 3,1 против 0,6. Когда выбран один файл,
+# слои всё равно берутся по ключу файла — порядок этому не мешает.
 NODE_SCAN = (" CROSS JOIN pages pg ON pg.file_key = n.file_key AND pg.page_id = n.page_id"
              " CROSS JOIN files f ON f.file_key = n.file_key")
+NODE_JOIN = NODE_SCAN
+
+
+def _int(v) -> int | None:
+    try:
+        return int(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _list(v) -> list[str]:
@@ -44,6 +51,7 @@ class Filter:
     files: list[str] = field(default_factory=list)          # только эти файлы (ключи)
     since: str | None = None             # только слои, появившиеся не раньше этой даты
     modified_since: str | None = None    # только файлы, изменённые не раньше этой даты
+    project: int | None = None           # только файлы этого проекта
 
     @classmethod
     def from_query(cls, q: dict) -> "Filter":
@@ -60,13 +68,15 @@ class Filter:
             pages=_list(one("pages")), skip_sections=_list(one("skip")),
             files=_list(one("files")),
             since=(one("since") or None), modified_since=(one("modified_since") or None),
+            project=_int(one("project")),
         )
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     def is_default(self) -> bool:
-        return self == Filter()
+        """Фильтры по умолчанию — проект не в счёт: у каждого проекта своя история."""
+        return self == Filter(project=self.project)
 
     def where(self, paints: bool = False) -> tuple[str, list]:
         """Условие для запроса, в котором есть n (слои), pg (страницы) и f (файлы).
@@ -97,4 +107,7 @@ class Filter:
         if self.modified_since:
             w.append("f.last_modified >= ?")
             a.append(self.modified_since)
+        if self.project is not None:
+            w.append(f"{x}.file_key IN (SELECT file_key FROM sources WHERE project_id = ?)")
+            a.append(self.project)
         return " AND ".join(w), a

@@ -128,7 +128,12 @@ def overview(con, filt: Filter, idx: Index) -> dict:
     """Общая картина. Тяжёлая часть запоминается до следующего изменения данных, стрелки
     изменений — из снимков, они считаются каждый раз заново и мгновенно."""
     base = memo.cached(con, "overview", [filt.to_dict(), idx.sig], lambda: _overview(con, filt, idx))
-    return {**base, "trend": _trend(con) if filt.is_default() else None}
+    return {**base, "trend": _trend(con, _key(filt.project)) if filt.is_default() else None}
+
+
+def _key(project: int | None) -> str:
+    """Под каким ключом в снимках лежат итоги: всё вместе или один проект."""
+    return "*" if project is None else f"p:{project}"
 
 
 def _overview(con, filt: Filter, idx: Index) -> dict:
@@ -136,6 +141,11 @@ def _overview(con, filt: Filter, idx: Index) -> dict:
              for fk, name, lm, la in con.execute("SELECT file_key, name, last_modified, loaded_at FROM files")}
     if filt.files:
         files = {k: v for k, v in files.items() if k in filt.files}
+    if filt.project is not None:
+        mine = {r[0] for r in con.execute("SELECT file_key FROM sources WHERE project_id = ?", (filt.project,))}
+        files = {k: v for k, v in files.items() if k in mine}
+    if filt.modified_since:
+        files = {k: v for k, v in files.items() if (v["last_modified"] or "") >= filt.modified_since}
     pages = {}
     for fk, ok, failed in con.execute(
             "SELECT file_key, SUM(status = 'ok'), SUM(status = 'failed') FROM pages GROUP BY file_key"):
@@ -173,19 +183,20 @@ def _overview(con, filt: Filter, idx: Index) -> dict:
 
 # ---------------------------------------------------------------- история
 
-def snapshot(con, idx: Index) -> str | None:
+def snapshot(con, idx: Index, project: int | None = None) -> str | None:
     """Записывает числа по каждому файлу при фильтрах по умолчанию. Вызывается после обновления.
 
     Только если что-то поменялось: иначе история копит одинаковые точки, а стрелки сравнивают
     с прошлым запуском, а не с прошлым изменением. Возвращает время снимка или None."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    data = overview(con, Filter(), idx)
+    key = _key(project)
+    data = overview(con, Filter(project=project), idx)
     rows = {f["file_key"]: {k: v for k, v in f["metrics"].items() if k != "levels"} for f in data["files"]}
-    rows["*"] = {k: v for k, v in data["totals"].items() if k != "levels"}
-    last = con.execute("SELECT MAX(taken_at) FROM snapshots").fetchone()[0]
+    rows[key] = {k: v for k, v in data["totals"].items() if k != "levels"}
+    last = con.execute("SELECT MAX(taken_at) FROM snapshots WHERE file_key = ?", (key,)).fetchone()[0]
     if last:
         prev = {fk: json.loads(m) for fk, m in con.execute(
-            "SELECT file_key, metrics FROM snapshots WHERE taken_at = ?", (last,))}
+            "SELECT file_key, metrics FROM snapshots WHERE taken_at = ?", (last,)) if fk in rows}
         if prev == json.loads(json.dumps(rows)):
             return None
     with dbm.writing(con):
@@ -194,16 +205,17 @@ def snapshot(con, idx: Index) -> str | None:
     return now
 
 
-def history(con, file_key: str = "*", limit: int = 200) -> list[dict]:
-    """Снимки по порядку — для графика «как менялось». file_key='*' — все файлы вместе."""
+def history(con, project: int | None = None, limit: int = 200) -> list[dict]:
+    """Снимки по порядку — для графика «как менялось»: итоги проекта или всех файлов вместе."""
     rows = con.execute("SELECT taken_at, metrics FROM snapshots WHERE file_key = ?"
-                       " ORDER BY taken_at DESC LIMIT ?", (file_key, limit)).fetchall()
+                       " ORDER BY taken_at DESC LIMIT ?", (_key(project), limit)).fetchall()
     return [{"taken_at": t, "metrics": json.loads(m)} for t, m in reversed(rows)]
 
 
-def _trend(con) -> dict | None:
-    """Разница между двумя последними снимками: по файлам и в целом."""
-    stamps = [r[0] for r in con.execute("SELECT DISTINCT taken_at FROM snapshots ORDER BY taken_at DESC LIMIT 2")]
+def _trend(con, key: str = "*") -> dict | None:
+    """Разница между двумя последними снимками: по файлам и в целом (key — проект или все)."""
+    stamps = [r[0] for r in con.execute("SELECT DISTINCT taken_at FROM snapshots WHERE file_key = ?"
+                                        " ORDER BY taken_at DESC LIMIT 2", (key,))]
     if len(stamps) < 2:
         return None
     cur, prev = stamps
@@ -218,4 +230,4 @@ def _trend(con) -> dict | None:
             continue
         diff[fk] = {k: (v - old[k]) for k, v in m.items()
                     if isinstance(v, (int, float)) and isinstance(old.get(k), (int, float))}
-    return {"since": prev, "now": cur, "by_file": diff}
+    return {"since": prev, "now": cur, "by_file": diff, "total": diff.get(key)}

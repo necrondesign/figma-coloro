@@ -56,7 +56,7 @@ class FigmaError(Exception):
 class Truncated(FigmaError):
     """Ответ пришёл, но оборван или не разбирается — запрос надо раздробить."""
 
-    def __init__(self, message: str = "ответ Figma оборвался на середине"):
+    def __init__(self, message: str = "The Figma response was cut off"):
         super().__init__("truncated", message)
 
 
@@ -64,7 +64,7 @@ class Figma:
     def __init__(self, token: str, on_wait=None):
         token = "".join(ch for ch in (token or "") if 33 <= ord(ch) <= 126)
         if len(token) < 20:
-            raise FigmaError("no_token", "токен Figma не задан или повреждён")
+            raise FigmaError("no_token", "The Figma access token is missing or damaged")
         self._token = token
         self._on_wait = on_wait
         self._local = threading.local()
@@ -104,7 +104,7 @@ class Figma:
                 encoding = (r.getheader("Content-Encoding") or "").lower()
             except (socket.timeout, TimeoutError):
                 self._drop()
-                last = FigmaError("timeout", "Figma не ответила вовремя")
+                last = FigmaError("timeout", "Figma did not respond in time")
                 time.sleep(10 * attempt)
                 continue
             except (http.client.IncompleteRead, http.client.RemoteDisconnected) as e:
@@ -114,7 +114,7 @@ class Figma:
                 raise Truncated() from e
             except (OSError, http.client.HTTPException):
                 self._drop()
-                last = FigmaError("network", "нет связи с Figma")
+                last = FigmaError("network", "Cannot reach Figma")
                 time.sleep(10 * attempt)
                 continue
 
@@ -131,21 +131,21 @@ class Figma:
                 except (TypeError, ValueError):
                     wait = 30.0 * attempt
                 _pause_all(max(wait, 5.0))
-                last = FigmaError("rate_limited", "Figma просит подождать: слишком много запросов", 429)
+                last = FigmaError("rate_limited", "Figma rate limit reached. Retrying shortly.", 429)
                 continue
             if status in (500, 502, 503, 504):
-                last = FigmaError("figma_unavailable", "Figma временно не отвечает", status)
+                last = FigmaError("figma_unavailable", "Figma is temporarily unavailable", status)
                 time.sleep(15 * attempt)
                 continue
             if status == 400:
                 # Figma так отвечает и на слишком тяжёлый запрос — дробим.
-                raise Truncated("запрос слишком велик для одного ответа Figma")
+                raise Truncated("The request is too large for one Figma response")
             if status in (401, 403):
-                raise FigmaError("forbidden", "токен не подходит или у него нет доступа к этому файлу", status)
+                raise FigmaError("forbidden", "Access denied. Check the file URL and the token permissions.", status)
             if status == 404:
-                raise FigmaError("not_found", "файл не найден — проверьте ссылку и доступ", status)
-            raise FigmaError("http", f"Figma ответила кодом {status}", status)
-        raise last or FigmaError("network", "нет связи с Figma")
+                raise FigmaError("not_found", "File not found. Check the file URL and access.", status)
+            raise FigmaError("http", f"Figma returned status {status}", status)
+        raise last or FigmaError("network", "Cannot reach Figma")
 
     def get_json(self, path: str, params: dict | None = None) -> dict:
         body = self.get_bytes(path, params)

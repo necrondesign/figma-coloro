@@ -26,11 +26,20 @@ CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
 -- хранятся один раз, а в таблицах — номером.
 CREATE TABLE IF NOT EXISTS vals (id INTEGER PRIMARY KEY, v TEXT UNIQUE);
 
+-- Проект — набор файлов одного продукта со своим справочником токенов. Проекты не смешиваются:
+-- числа, история и отчёт считаются по файлам проекта. Данные файла хранятся один раз, даже если
+-- файл добавлен в два проекта.
+CREATE TABLE IF NOT EXISTS projects (
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at TEXT,
+    tokens_file TEXT, tokens_loaded_at TEXT
+);
+
 -- То, что человек добавил: ссылка и, при желании, какие страницы брать (JSON-список
 -- образцов названий; NULL — все страницы).
 CREATE TABLE IF NOT EXISTS sources (
-    id INTEGER PRIMARY KEY, url TEXT UNIQUE, file_key TEXT, node_id TEXT,
-    pages TEXT, added_at TEXT
+    id INTEGER PRIMARY KEY, url TEXT, file_key TEXT, node_id TEXT,
+    pages TEXT, added_at TEXT, project_id INTEGER,
+    UNIQUE (project_id, url)
 );
 
 -- pages — все страницы файла при последней проверке ([[id, название], …]): по ним видно,
@@ -87,7 +96,9 @@ CREATE TABLE IF NOT EXISTS paints (
     hid INTEGER, inst INTEGER, sect INTEGER, screen TEXT, first_seen TEXT
 );
 CREATE INDEX IF NOT EXISTS paints_page ON paints (file_key, page_id);
-CREATE INDEX IF NOT EXISTS paints_color ON paints (color);
+-- Цвет вместе с прозрачностью: список различных цветов читается из индекса, а не перебором
+-- миллионов краск — поиск по цвету начинается с него.
+CREATE INDEX IF NOT EXISTS paints_value ON paints (color, alpha);
 
 -- Компоненты, на которые ссылаются инстансы файла: имя, набор вариантов, библиотека или свой.
 --   remote — 1: из библиотеки, 0: заведён в этом файле
@@ -118,7 +129,7 @@ CREATE INDEX IF NOT EXISTS images_page ON images (file_key, page_id);
 
 -- Справочник токенов цвета: загружается из файла дизайн-системы.
 CREATE TABLE IF NOT EXISTS tokens (
-    name TEXT, color TEXT, alpha INTEGER, mode TEXT, collection TEXT
+    name TEXT, color TEXT, alpha INTEGER, mode TEXT, collection TEXT, project_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS tokens_value ON tokens (color, alpha);
 
@@ -133,10 +144,12 @@ CREATE TABLE IF NOT EXISTS snapshots (
 # обновятся при следующей загрузке — формат поднят, и файлы перезагрузятся.
 _ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"), ("ovr", "INTEGER"), ("tnorm", "TEXT"), ("nnorm", "TEXT")),
           "files": (("pages", "TEXT"),),
+          "sources": (("project_id", "INTEGER"),),
+          "tokens": (("project_id", "INTEGER"),),
           "paints": (("hid", "INTEGER"), ("inst", "INTEGER"), ("sect", "INTEGER"), ("screen", "TEXT"),
                      ("first_seen", "TEXT"))}
 # Индексы, которые больше не нужны: в старой базе их убираем, чтобы не занимали место.
-_DROPPED = ("paints_node", "props_node", "effects_node", "images_node")
+_DROPPED = ("paints_node", "props_node", "effects_node", "images_node", "paints_color")
 
 
 # Схема создаётся один раз на путь: несколько потоков, открывших новую базу одновременно,
@@ -198,12 +211,43 @@ def connect(path: str | Path) -> sqlite3.Connection:
             for index in _DROPPED:
                 con.execute(f"DROP INDEX IF EXISTS {index}")
             con.commit()
+            _to_projects(con)
             _READY.add(str(p.resolve()))
     try:
         p.chmod(0o600)
     except OSError:
         pass
     return con
+
+
+def _to_projects(con: sqlite3.Connection) -> None:
+    """Перенос базы, сделанной до проектов: всё, что было, становится одним проектом.
+
+    В старой базе ссылка была уникальной на всю базу. Теперь одну ссылку можно добавить в два
+    проекта — таблица источников пересобирается с уникальностью внутри проекта."""
+    sql = (con.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sources'").fetchone() or [""])[0]
+    if "url TEXT UNIQUE" in sql:
+        con.executescript("""
+            BEGIN;
+            CREATE TABLE sources_new (id INTEGER PRIMARY KEY, url TEXT, file_key TEXT, node_id TEXT,
+                                      pages TEXT, added_at TEXT, project_id INTEGER, UNIQUE (project_id, url));
+            INSERT INTO sources_new SELECT id, url, file_key, node_id, pages, added_at, project_id FROM sources;
+            DROP TABLE sources;
+            ALTER TABLE sources_new RENAME TO sources;
+            COMMIT;""")
+    orphans = con.execute("SELECT (SELECT COUNT(*) FROM sources WHERE project_id IS NULL)"
+                          " + (SELECT COUNT(*) FROM tokens WHERE project_id IS NULL)").fetchone()[0]
+    if not orphans:
+        return
+    pid = (con.execute("SELECT MIN(id) FROM projects").fetchone() or [None])[0]
+    with con:
+        if pid is None:
+            meta = dict(con.execute("SELECT k, v FROM meta WHERE k IN ('tokens_file', 'tokens_loaded_at')").fetchall())
+            pid = con.execute("INSERT INTO projects (name, created_at, tokens_file, tokens_loaded_at)"
+                              " VALUES ('My project', datetime('now'), ?, ?)",
+                              (meta.get("tokens_file"), meta.get("tokens_loaded_at"))).lastrowid
+        con.execute("UPDATE sources SET project_id = ? WHERE project_id IS NULL", (pid,))
+        con.execute("UPDATE tokens SET project_id = ? WHERE project_id IS NULL", (pid,))
 
 
 def path_of(con: sqlite3.Connection) -> str:

@@ -20,21 +20,21 @@ from .filters import NODE_JOIN, Filter
 MANUAL = "n.pinst IS NULL AND n.type != 'INSTANCE'"
 NEAR_OFFSET = 1.0
 NEAR_RADIUS = 2.0
-NAMES = {"DROP_SHADOW": "тень", "INNER_SHADOW": "внутренняя тень",
-         "LAYER_BLUR": "размытие слоя", "BACKGROUND_BLUR": "размытие фона"}
+NAMES = {"DROP_SHADOW": "Drop shadow", "INNER_SHADOW": "Inner shadow",
+         "LAYER_BLUR": "Layer blur", "BACKGROUND_BLUR": "Background blur"}
 _COLS = ("type", "color", "alpha", "x", "y", "radius", "spread")
 
 
 def _n(v) -> str:
-    return "0" if v is None else f"{v:g}".replace(".", ",")
+    return "0" if v is None else f"{v:g}"
 
 
 def label(e: dict) -> str:
     name = NAMES.get(e["type"], e["type"].lower())
     if e["type"] in ("LAYER_BLUR", "BACKGROUND_BLUR"):
         return f"{name} {_n(e['radius'])}"
-    return f"{name} {_n(e['x'])} {_n(e['y'])} · размытие {_n(e['radius'])}" + (
-        f" · разлёт {_n(e['spread'])}" if e["spread"] else "")
+    return f"{name} {_n(e['x'])} {_n(e['y'])} · blur {_n(e['radius'])}" + (
+        f" · spread {_n(e['spread'])}" if e["spread"] else "")
 
 
 def _row(r) -> dict:
@@ -115,7 +115,7 @@ def condition(q: dict) -> tuple[str, list]:
                 None if q.get("alpha") in (None, "", "null") else int(q.get("alpha")),
                 num("x"), num("y"), num("radius"), num("spread")]
     except ValueError:
-        raise ValueError("параметры эффекта — числа")
+        raise ValueError("Effect parameters must be numbers")
     cond = (f"{MANUAL} AND (n.file_key, n.id) IN (SELECT e.file_key, e.node_id FROM effects e WHERE e.src IS NULL AND "
             + " AND ".join(f"e.{c} IS ?" for c in _COLS) + ")")
     return cond, vals
@@ -144,5 +144,5 @@ def images(con, filt: Filter, limit: int = 300) -> dict:
 def image_condition(q: dict) -> tuple[str, list]:
     ref = q.get("ref")
     if not ref:
-        raise ValueError("выберите картинку")
+        raise ValueError("Choose an image")
     return "(n.file_key, n.id) IN (SELECT i.file_key, i.node_id FROM images i WHERE i.ref = ?)", [ref]
