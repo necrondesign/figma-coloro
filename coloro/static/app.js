@@ -1199,31 +1199,45 @@ async function viewComponents(el, stale) {
       <div class="what">${g.overridden ? `<span class="tag near">Overridden</span>${pct((g.overridden * 100) / g.instances)} of instances` : '<span class="muted">Not overridden</span>'}</div></div>`,
   (g, box) => openComponent(box, g, {}));
   if (sh.previews) {
-    loadPreviews(el, stale);
+    loadPreviews(el);
     // «Show more» дорисовывает строки — подгружаем и их превью.
-    new MutationObserver(() => loadPreviews(el, stale)).observe($("#list"), { childList: true });
+    new MutationObserver(() => loadPreviews(el)).observe($("#list"), { childList: true });
   }
 }
 
-/* Превью слоёв: Figma рисует их по запросу; просим пачкой на файл, одну картинку — один раз. */
+/* Превью слоёв: Figma рисует их по запросу. Просим только то, что видно на экране (по мере
+   прокрутки), пачкой на файл, и одну картинку — один раз. Так и быстрее, и легче. */
 const PREVIEW_CACHE = {};
-function loadPreviews(root, stale) {
-  const byFile = {};
+let previewQueue = [];
+const previewSeen = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) { previewSeen.unobserve(e.target); previewQueue.push(e.target); }
+  if (previewQueue.length) flushPreviews();
+}, { rootMargin: "200px" });
+const flushPreviews = debounce(() => { const els = previewQueue; previewQueue = []; requestPreviews(els); }, 80);
+function loadPreviews(root) {
   root.querySelectorAll("[data-pf]:not([data-pl])").forEach((t) => {
+    if (!t.dataset.pf) return;
     t.dataset.pl = "1";
     const key = t.dataset.pf + "|" + t.dataset.pn;
     if (PREVIEW_CACHE[key] !== undefined) { setPreview(t, PREVIEW_CACHE[key]); return; }
     t.classList.add("waiting");
-    (byFile[t.dataset.pf] = byFile[t.dataset.pf] || []).push(t);
+    previewSeen.observe(t);
   });
+}
+function requestPreviews(list) {
+  const byFile = {};
+  for (const t of list) {
+    const key = t.dataset.pf + "|" + t.dataset.pn;
+    if (PREVIEW_CACHE[key] !== undefined) { setPreview(t, PREVIEW_CACHE[key]); continue; }
+    (byFile[t.dataset.pf] = byFile[t.dataset.pf] || []).push(t);
+  }
   for (const [fk, els] of Object.entries(byFile)) {
     const ids = [...new Set(els.map((t) => t.dataset.pn))];
     for (let i = 0; i < ids.length; i += 40) {
       const chunk = ids.slice(i, i + 40);
       api("/api/previews" + fq({ file_key: fk, ids: chunk.join(",") })).then((r) => {
         chunk.forEach((id) => (PREVIEW_CACHE[fk + "|" + id] = r.urls[id] || null));
-        if (stale && stale()) return;
-        els.filter((t) => chunk.includes(t.dataset.pn)).forEach((t) => setPreview(t, r.urls[t.dataset.pn]));
+        els.filter((t) => chunk.includes(t.dataset.pn) && t.isConnected).forEach((t) => setPreview(t, r.urls[t.dataset.pn]));
       }).catch((e) => { els.forEach((t) => t.classList.remove("waiting")); toast(e.message, "err"); });
     }
   }
@@ -1266,8 +1280,7 @@ function openSwitcher(box, g, chosen) {
   const shown = matching[0] || variants[0];
   const props = Object.entries(g.variants);
   const label = (v) => Object.keys(v.props).length ? Object.entries(v.props).map(([k, val]) => `${k}: ${val}`).join(" · ") : v.name || g.title;
-  box.innerHTML = `<div class="kswitch">
-      <div class="kbig sample" data-pf="${esc(shown.preview ? shown.preview[0] : "")}" data-pn="${esc(shown.preview ? shown.preview[1] : "")}"></div>
+  box.innerHTML = `<div class="kinsp"></div><div class="kswitch">
       <div>
         ${props.map(([k, vs]) => `<div class="kprop"><span class="label">${esc(k)}</span><div class="chips" style="padding:0">
           ${Object.entries(vs).sort((a, b) => b[1] - a[1]).map(([v, n]) => {
@@ -1292,10 +1305,140 @@ function openSwitcher(box, g, chosen) {
   if (rs) rs.onclick = (e) => { e.stopPropagation(); openSwitcher(box, g, {}); };
   box.querySelectorAll("[data-vi]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openSwitcher(box, g, { ...variants[+b.dataset.vi].props }); }));
   loadPreviews(box);
+  if (shown.preview) inspector(box.querySelector(".kinsp"), shown.preview[0], shown.preview[1]);
+  else box.querySelector(".kinsp").innerHTML = '<p class="muted">This variant is used only inside other components, so Figma cannot draw it on its own.</p>';
   const q = { comp: [g.set || g.cname] };
   for (const [k, v] of Object.entries(chosen)) q["prop_" + k] = [v];
   screensBlock(box.querySelector(".kres"), (offset, limit) => "/api/find" + fq({ ...q, offset, limit }),
     (gr) => "/api/find/layers" + fq({ ...q, file_key: gr.file_key, screen: gr.screen_id || "" }));
+}
+
+/* ───────────────────── inspector ───────────────────── */
+
+/* Картинка от Figma в 2x и поверх неё — разметка из данных Figma: рамки, поля, промежутки.
+   Справа — свойства выбранного слоя и CSS для разработки. */
+const INSPECT_CACHE = {};
+async function inspector(host, fk, node) {
+  host.innerHTML = '<div class="kcanvas"><div class="loading">Figma is drawing the component…</div></div><div class="kpanel"></div>';
+  const key = fk + "|" + node;
+  try {
+    const [img, d] = INSPECT_CACHE[key] || (INSPECT_CACHE[key] = await Promise.all([
+      api("/api/previews" + fq({ file_key: fk, ids: node, scale: 2 })).then((r) => r.urls[node]),
+      api("/api/inspect" + fq({ file_key: fk, node })),
+    ]));
+    if (!host.isConnected) return;
+    if (!img) { host.querySelector(".kcanvas").innerHTML = '<p class="muted">Figma could not draw this layer.</p>'; return; }
+    const canvas = host.querySelector(".kcanvas");
+    const maxW = canvas.clientWidth - 24, maxH = 340;
+    const z = Math.min(2, maxW / d.width, maxH / d.height);
+    canvas.innerHTML = `<div class="kstage" style="width:${d.width * z}px;height:${d.height * z}px">
+        <img src="${esc(img)}" alt="" referrerpolicy="no-referrer" style="width:100%;height:100%">
+        <div class="kov"></div></div>
+      <div class="kzoom muted">${Math.round(z * 100)}% · ${num(d.width)} × ${num(d.height)}</div>`;
+    const stage = canvas.querySelector(".kstage"), ov = canvas.querySelector(".kov");
+    let sel = d.layers[0], hover = null;
+    const rect = (l, cls, label) => `<div class="${cls}" style="left:${l.x * z}px;top:${l.y * z}px;width:${l.w * z}px;height:${l.h * z}px">${label ? `<span>${label}</span>` : ""}</div>`;
+    const box = (x, y, w, h, cls, label) => (w > 0 && h > 0 ? `<div class="${cls}" style="left:${x * z}px;top:${y * z}px;width:${w * z}px;height:${h * z}px">${label != null ? `<span>${label}</span>` : ""}</div>` : "");
+    const draw = () => {
+      let h = "";
+      const L = sel.layout;
+      if (L) {
+        const [t, r, b, l] = L.pad;
+        h += box(sel.x, sel.y, sel.w, t, "kpad", t || null) + box(sel.x + sel.w - r, sel.y + t, r, sel.h - t - b, "kpad", r || null)
+          + box(sel.x, sel.y + sel.h - b, sel.w, b, "kpad", b || null) + box(sel.x, sel.y + t, l, sel.h - t - b, "kpad", l || null);
+        const kids = d.layers.filter((k) => k.p === sel.i).sort((a, c) => (L.dir === "row" ? a.x - c.x : a.y - c.y));
+        for (let i = 1; i < kids.length; i++) {
+          const a = kids[i - 1], c = kids[i];
+          const gapLabel = L.gap === "auto" ? "auto" : L.gap;
+          if (L.dir === "row") h += box(a.x + a.w, sel.y + t, c.x - a.x - a.w, sel.h - t - b, "kgap", gapLabel);
+          else h += box(sel.x + l, a.y + a.h, sel.w - l - r, c.y - a.y - a.h, "kgap", gapLabel);
+        }
+      }
+      h += rect(sel, "ksel", `${num(sel.w)} × ${num(sel.h)}`);
+      if (hover && hover !== sel) h += rect(hover, "khov", `${esc(hover.name)} · ${num(hover.w)} × ${num(hover.h)}`);
+      ov.innerHTML = h;
+      host.querySelector(".kpanel").innerHTML = layerPanel(sel, d);
+      const cc = host.querySelector("[data-css]");
+      if (cc) cc.onclick = () => copy(layerCss(sel, d), "CSS");
+      host.querySelectorAll("[data-li]").forEach((a) => (a.onclick = () => { sel = d.layers[+a.dataset.li]; draw(); }));
+    };
+    const at = (e) => {
+      const r = stage.getBoundingClientRect();
+      const x = (e.clientX - r.left) / z, y = (e.clientY - r.top) / z;
+      let best = null;
+      for (const l of d.layers) if (x >= l.x && y >= l.y && x <= l.x + l.w && y <= l.y + l.h && (!best || l.w * l.h <= best.w * best.h)) best = l;
+      return best;
+    };
+    stage.onmousemove = (e) => { const l = at(e); if (l !== hover) { hover = l; draw(); } };
+    stage.onmouseleave = () => { hover = null; draw(); };
+    stage.onclick = (e) => { e.stopPropagation(); const l = at(e); if (l) { sel = l; draw(); } };
+    draw();
+  } catch (e) {
+    delete INSPECT_CACHE[key];
+    if (host.isConnected) host.querySelector(".kcanvas").innerHTML = `<div class="error">${esc(e.message)}</div>`;
+  }
+}
+
+const hexA = (c, a) => `#${c}${a != null && a < 100 ? " " + a + "%" : ""}`;
+function paintLine(p) {
+  if (p.kind === "solid") return `<div class="kp-row"><span class="sw2" style="background:#${p.color};opacity:${p.alpha / 100}"></span><span class="mono">${hexA(p.color, p.alpha)}</span>
+    ${p.tokens && p.tokens.length ? `<span class="tag token">${esc(p.tokens.join(", "))}</span>` : p.variable ? '<span class="tag token">variable</span>' : '<span class="tag off">no token</span>'}${p.style ? ` <span class="muted">${esc(p.style)}</span>` : ""}</div>`;
+  if (p.stops) return `<div class="kp-row"><span class="mono">${esc(p.kind)}</span> ${p.stops.map((s) => `<span class="sw2" style="background:#${s.color};opacity:${s.alpha / 100}"></span>`).join("")}${p.style ? ` <span class="muted">${esc(p.style)}</span>` : ""}</div>`;
+  return `<div class="kp-row">${esc(p.kind)}${p.mode ? " · " + esc(p.mode) : ""}</div>`;
+}
+function layerPanel(l, d) {
+  const parent = l.p != null ? d.layers[l.p] : null;
+  const v = (name) => (l.bound.includes(name) ? ' <span class="tag token" title="Bound to a variable">var</span>' : "");
+  const rows = [];
+  rows.push(`<div class="kp-h"><b>${esc(l.name)}</b><span class="muted">${esc(l.type.toLowerCase().replace(/_/g, " "))}</span></div>`);
+  rows.push(`<div class="kp-k">Size</div><div class="kp-v">${num(l.w)} × ${num(l.h)}${l.sizing ? ` <span class="muted">${l.sizing.filter(Boolean).join(" · ")}</span>` : ""}</div>`);
+  if (parent) rows.push(`<div class="kp-k">Position</div><div class="kp-v">${num(Math.round((l.x - parent.x) * 100) / 100)}, ${num(Math.round((l.y - parent.y) * 100) / 100)} <span class="muted">in ${esc(parent.name)}</span></div>`);
+  if (l.layout) {
+    const L = l.layout;
+    rows.push(`<div class="kp-k">Auto layout</div><div class="kp-v">${L.dir === "row" ? "Horizontal" : "Vertical"}${L.wrap ? ", wrap" : ""} · gap ${L.gap}${v("itemSpacing")}</div>`);
+    rows.push(`<div class="kp-k">Padding</div><div class="kp-v">${L.pad.join(" ")}${["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].some((k) => l.bound.includes(k)) ? ' <span class="tag token">var</span>' : ""} <span class="muted">top right bottom left</span></div>`);
+    rows.push(`<div class="kp-k">Align</div><div class="kp-v">${esc(L.main)} · ${esc(L.cross)}</div>`);
+  }
+  if (l.radius != null) rows.push(`<div class="kp-k">Radius</div><div class="kp-v">${Array.isArray(l.radius) ? l.radius.join(" ") : l.radius}${["topLeftRadius", "cornerRadius"].some((k) => l.bound.includes(k)) ? ' <span class="tag token">var</span>' : ""}</div>`);
+  if (l.fills) rows.push(`<div class="kp-k">Fill</div><div class="kp-v">${l.fills.map(paintLine).join("")}</div>`);
+  if (l.strokes) rows.push(`<div class="kp-k">Stroke</div><div class="kp-v">${l.stroke_weight != null ? `${l.stroke_weight} ${esc(l.stroke_align)}` : ""}${l.strokes.map(paintLine).join("")}</div>`);
+  if (l.effects) rows.push(`<div class="kp-k">Effects</div><div class="kp-v">${l.effects.map((e) => `<div class="kp-row">${esc(e.label)}${e.color ? ` · <span class="mono">${hexA(e.color, e.alpha)}</span>` : ""}</div>`).join("")}${l.effect_style ? `<span class="muted">${esc(l.effect_style)}</span>` : '<span class="tag off">no style</span>'}</div>`);
+  if (l.text) {
+    const t = l.text;
+    rows.push(`<div class="kp-k">Text</div><div class="kp-v">${esc(t.family)} ${esc(t.style || "")} · ${t.size}${t.line ? "/" + t.line : ""}${t.tracking ? ` · tracking ${t.tracking}` : ""}
+      <div>${t.style_name ? `<span class="tag token">${esc(t.style_name)}</span>` : '<span class="tag off">no text style</span>'}</div><div class="muted">“${esc(t.chars)}”</div></div>`);
+  }
+  if (l.opacity != null) rows.push(`<div class="kp-k">Opacity</div><div class="kp-v">${l.opacity}%</div>`);
+  const kids = d.layers.filter((k) => k.p === l.i);
+  return `${rows.join("")}
+    <div class="kp-acts"><button class="b sm" data-css>${ICON.copy}Copy CSS</button>${parent ? `<button class="b sm quiet" data-li="${parent.i}">Select parent</button>` : ""}</div>
+    ${kids.length ? `<div class="kp-k" style="margin-top:8px">Layers inside</div><div class="kp-kids">${kids.slice(0, 30).map((k) => `<button class="link" data-li="${k.i}">${esc(k.name)}</button>`).join("")}</div>` : ""}`;
+}
+function layerCss(l) {
+  const css = [`width: ${l.w}px;`, `height: ${l.h}px;`];
+  if (l.layout) {
+    const L = l.layout;
+    css.push("display: flex;", `flex-direction: ${L.dir};`);
+    if (L.wrap) css.push("flex-wrap: wrap;");
+    const map = { start: "flex-start", center: "center", end: "flex-end", "space between": "space-between", baseline: "baseline" };
+    css.push(`justify-content: ${map[L.main] || "flex-start"};`, `align-items: ${map[L.cross] || "flex-start"};`);
+    if (L.gap !== "auto") css.push(`gap: ${L.gap}px;`);
+    css.push(`padding: ${L.pad.map((p) => p + "px").join(" ")};`);
+  }
+  if (l.radius != null) css.push(`border-radius: ${Array.isArray(l.radius) ? l.radius.map((r) => r + "px").join(" ") : l.radius + "px"};`);
+  const solid = (l.fills || []).find((p) => p.kind === "solid");
+  const rgba = (p) => (p.alpha < 100 ? `rgba(${parseInt(p.color.slice(0, 2), 16)}, ${parseInt(p.color.slice(2, 4), 16)}, ${parseInt(p.color.slice(4, 6), 16)}, ${p.alpha / 100})` : "#" + p.color);
+  if (solid) css.push(`${l.text ? "color" : "background"}: ${rgba(solid)};${solid.tokens && solid.tokens.length ? ` /* ${solid.tokens[0]} */` : ""}`);
+  const st = (l.strokes || []).find((p) => p.kind === "solid");
+  if (st && l.stroke_weight) css.push(`border: ${l.stroke_weight}px solid ${rgba(st)};`);
+  if (l.text) {
+    const t = l.text;
+    css.push(`font-family: "${t.family}";`, `font-weight: ${t.weight || 400};`, `font-size: ${t.size}px;`);
+    if (t.line) css.push(`line-height: ${t.line}px;`);
+    if (t.tracking) css.push(`letter-spacing: ${t.tracking}px;`);
+  }
+  if (l.opacity != null) css.push(`opacity: ${l.opacity / 100};`);
+  return `/* ${l.name} */\n` + css.join("\n");
 }
 
 /* ───────────────────── search results ───────────────────── */

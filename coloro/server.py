@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import db as dbm
-from . import effects, health, inventory, memo, report, rules, scales, search, tokens, typography
+from . import effects, health, inspect, inventory, memo, report, rules, scales, search, tokens, typography
 from .figma import Figma, FigmaError
 from .filters import Filter
 from .load import update_all
@@ -72,16 +72,17 @@ def image_urls(file_key: str) -> dict:
 
 # Превью компонентов: Figma рисует слой картинкой и отдаёт ссылку, живущую несколько недель.
 # Запоминаем на сутки, рисуем пачками и не больше трёх запросов разом.
-_PREVIEWS: dict[tuple[str, str], tuple[float, str | None]] = {}
+_PREVIEWS: dict[tuple[str, str, int], tuple[float, str | None]] = {}
 _PREVIEW_TTL = 86400
 _PREVIEW_BATCH = 40
 
 
-def previews(file_key: str, ids: list[str]) -> dict:
+def previews(file_key: str, ids: list[str], scale: int = 1) -> dict:
+    """Картинки слоёв от Figma. scale 2 — для крупного показа: на ретине картинка в 1x мылится."""
     now = time.time()
     with _IMAGE_LOCK:
-        have = {i: _PREVIEWS[(file_key, i)][1] for i in ids
-                if (file_key, i) in _PREVIEWS and now - _PREVIEWS[(file_key, i)][0] < _PREVIEW_TTL}
+        have = {i: _PREVIEWS[(file_key, i, scale)][1] for i in ids
+                if (file_key, i, scale) in _PREVIEWS and now - _PREVIEWS[(file_key, i, scale)][0] < _PREVIEW_TTL}
     need = [i for i in ids if i not in have]
     if need:
         token = read_token()
@@ -92,14 +93,41 @@ def previews(file_key: str, ids: list[str]) -> dict:
             batch = need[k:k + _PREVIEW_BATCH]
             with _IMAGE_GATE:
                 try:
-                    got = figma.get_json(f"/images/{file_key}", {"ids": ",".join(batch), "format": "png", "scale": 1}).get("images") or {}
+                    got = figma.get_json(f"/images/{file_key}", {"ids": ",".join(batch), "format": "png", "scale": scale}).get("images") or {}
                 except FigmaError:
                     got = {}       # слой не рисуется (удалён, слишком велик) — без превью, но не ошибка экрана
             with _IMAGE_LOCK:
                 for i in batch:
-                    _PREVIEWS[(file_key, i)] = (now, got.get(i))
+                    _PREVIEWS[(file_key, i, scale)] = (now, got.get(i))
                     have[i] = got.get(i)
     return have
+
+
+# Разметка компонента: одно дерево слоёв на вариант, пока версия файла та же.
+_INSPECT: dict[tuple, dict] = {}
+# Своя очередь: разметку открывают по одному варианту, и она не должна ждать пачки превью.
+_INSPECT_GATE = threading.Semaphore(2)
+
+
+def inspect_node(con, file_key: str, node_id: str, idx) -> dict:
+    version = (con.execute("SELECT version FROM files WHERE file_key = ?", (file_key,)).fetchone() or [""])[0]
+    key = (file_key, node_id, version)
+    with _IMAGE_LOCK:
+        raw = _INSPECT.get(key)
+    if raw is None:
+        token = read_token()
+        if not token:
+            raise ValueError("A Figma access token is required. Add it in Settings.")
+        with _INSPECT_GATE:
+            res = Figma(token).nodes(file_key, [node_id])
+        raw = (res.get("nodes") or {}).get(node_id)
+        if not raw or not raw.get("document"):
+            raise ValueError("This layer is no longer in the file. Update the file.")
+        with _IMAGE_LOCK:
+            if len(_INSPECT) > 200:
+                _INSPECT.clear()
+            _INSPECT[key] = raw
+    return inspect.build(raw, idx)
 
 
 def read_token() -> str:
@@ -451,7 +479,12 @@ class Handler(BaseHTTPRequestHandler):
             if not con.execute("SELECT 1 FROM files WHERE file_key = ?", (fk,)).fetchone():
                 return self._error("Unknown file", 404)
             ids = [i for i in flat.get("ids", "").split(",") if i][:200]
-            return self._json({"urls": previews(fk, ids)})
+            return self._json({"urls": previews(fk, ids, 2 if flat.get("scale") == "2" else 1)})
+        if path == "/api/inspect":
+            fk = flat.get("file_key", "")
+            if not con.execute("SELECT 1 FROM files WHERE file_key = ?", (fk,)).fetchone():
+                return self._error("Unknown file", 404)
+            return self._json(inspect_node(con, fk, flat.get("node", ""), idx))
         if path == "/api/image-urls":
             fk = flat.get("file_key", "")
             if not con.execute("SELECT 1 FROM files WHERE file_key = ?", (fk,)).fetchone():

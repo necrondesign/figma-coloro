@@ -138,6 +138,36 @@ class Find(unittest.TestCase):
         self.assertEqual(usage["brand/unused"]["uses"], 0)
 
 
+class Inspect(unittest.TestCase):
+    def test_layers_relative_to_render_bounds(self):
+        from coloro import inspect
+        entry = {"styles": {"S:1": {"name": "Brand/Pink"}}, "document": {
+            "id": "1:1", "type": "COMPONENT", "name": "Button",
+            "absoluteBoundingBox": {"x": 100, "y": 200, "width": 120, "height": 40},
+            "absoluteRenderBounds": {"x": 96, "y": 198, "width": 128, "height": 48},
+            "layoutMode": "HORIZONTAL", "itemSpacing": 8, "paddingTop": 12, "paddingRight": 16, "paddingBottom": 12, "paddingLeft": 16,
+            "layoutSizingHorizontal": "HUG", "layoutSizingVertical": "FIXED", "cornerRadius": 8,
+            "boundVariables": {"paddingLeft": {"id": "v"}},
+            "fills": [{"type": "SOLID", "color": {"r": 1, "g": 0, "b": 111 / 255, "a": 1}}], "styles": {"fill": "S:1"},
+            "children": [{"id": "1:2", "type": "TEXT", "name": "Label", "characters": "Buy",
+                          "absoluteBoundingBox": {"x": 116, "y": 212, "width": 30, "height": 16},
+                          "style": {"fontFamily": "Inter", "fontStyle": "Medium", "fontWeight": 500, "fontSize": 13, "lineHeightPx": 16}},
+                         {"id": "1:3", "type": "VECTOR", "name": "hidden", "visible": False,
+                          "absoluteBoundingBox": {"x": 0, "y": 0, "width": 1, "height": 1}}]}}
+        idx = tokens.Index(tokens.parse("name,value\nbrand/pink,#FF006F\n"))
+        d = inspect.build(entry, idx)
+        self.assertEqual((d["width"], d["height"]), (128, 48))
+        root, label = d["layers"]
+        self.assertEqual((root["x"], root["y"]), (4, 2))          # рамка слоя — от границ отрисовки
+        self.assertEqual(root["layout"], {"dir": "row", "gap": 8, "pad": [12, 16, 12, 16], "main": "start", "cross": "start", "wrap": False})
+        self.assertEqual(root["sizing"], ["hug", "fixed"])
+        self.assertEqual(root["bound"], ["paddingLeft"])
+        self.assertEqual(root["fills"][0]["tokens"], ["brand/pink"])
+        self.assertEqual(root["fills"][0]["style"], "Brand/Pink")
+        self.assertEqual((label["p"], label["x"], label["text"]["size"]), (0, 20, 13))
+        self.assertEqual(len(d["layers"]), 2)                   # скрытый слой не показывается
+
+
 class Projects(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
