@@ -87,6 +87,15 @@ def condition(kind: str, q: dict, con=None) -> tuple[str, list, dict]:
             conds.append("n.type = 'TEXT'")
         return " AND ".join(conds), args, {}
 
+    if kind == "font":
+        # Тексты без стиля с этим сочетанием шрифта, положенные на экран вручную —
+        # то же, что считает экран типографики.
+        try:
+            fid = int(q.get("font") or 0)
+        except ValueError:
+            raise SearchError("неизвестный шрифт")
+        return "n.type = 'TEXT' AND n.tstyle IS NULL AND n.pinst IS NULL AND n.font = ?", [fid], {}
+
     if kind == "component":
         cid = q.get("component")
         if cid:

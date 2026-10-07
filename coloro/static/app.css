@@ -177,6 +177,14 @@ h2:first-child{margin-top:0}
   padding:1px 5px;border-radius:var(--r-xs)}
 .place .when{color:var(--muted);font-size:10.5px;margin-left:6px}
 
+/* ── типографика ───────────────────────────────── */
+.fsample{width:30px;height:30px;display:grid;place-items:center;border-radius:var(--r-sm);background:var(--btn);
+  line-height:1;overflow:hidden;font-feature-settings:normal}
+.styles{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:2px 12px}
+.srow{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:10px;align-items:center;padding:5px 4px}
+.srow .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.srow .name small{display:block;font-weight:400;color:var(--muted);font-size:10.5px}
+
 /* ── компоненты ─────────────────────────────────── */
 .krow{display:grid;grid-template-columns:minmax(0,1.6fr) 110px 100px 70px 120px;gap:10px;align-items:center;
   padding:8px;border-radius:var(--r-sm);cursor:pointer}

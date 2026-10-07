@@ -137,7 +137,7 @@ const COLUMNS = [
   { key: "stray", title: "Левые цвета", hint: "Почти токен, другая прозрачность и мимо системы", cat: "stray" },
   { key: "unbound", title: "Не привязаны", hint: "Цвет совпадает с токеном, но набран вручную", cat: "unbound" },
   { key: "raw_pct", title: "Вручную", hint: "Доля применений цвета без токена и стиля", cat: "all", pct: true },
-  { key: "text_nostyle_pct", title: "Тексты без стиля", hint: "Доля текстов без текстового стиля — только тех, что положены на экран вручную: внутри компонентов стиль задаёт библиотека", pct: true },
+  { key: "text_nostyle_pct", title: "Тексты без стиля", hint: "Доля текстов без текстового стиля — только тех, что положены на экран вручную: внутри компонентов стиль задаёт библиотека", pct: true, href: "#/typography?cat=all" },
   { key: "generic", title: "Безымянные", hint: "Кадры и группы с названием по умолчанию — Frame 12, Group 7 — только положенные на экран вручную: внутри компонентов названия задаёт библиотека" },
 ];
 
@@ -172,6 +172,7 @@ async function viewOverview(el, params, stale) {
       <a class="task" href="#/search?mode=text"><b>Найти текст</b><span>слово или фраза в любой форме</span></a>
       <a class="task" href="#/search?mode=size"><b>Найти размер</b><span>например 56 × 56 с допуском</span></a>
       <a class="task" href="#/search?mode=colour"><b>Найти цвет</b><span>и похожие на него оттенки</span></a>
+      <a class="task" href="#/typography"><b>Типографика</b><span>тексты без стиля против системы стилей</span></a>
       <a class="task" href="#/components"><b>Компоненты</b><span>где стоят, какие варианты, что отвязано</span></a>
     </div>
     <div class="tiles">
@@ -192,7 +193,7 @@ async function viewOverview(el, params, stale) {
           const v = m[c.key];
           const lv = m.levels[c.key] || "none";
           const text = v == null ? "—" : c.pct ? pct(v) : fmt(v);
-          const click = c.cat && v != null ? `class="cell lv-${lv}" data-file="${esc(f.file_key)}" data-cat="${c.cat}"` : `class="lv-${lv}"`;
+          const click = (c.cat || c.href) && v != null ? `class="cell lv-${lv}" data-file="${esc(f.file_key)}" ${c.cat ? `data-cat="${c.cat}"` : `data-href="${c.href}"`}` : `class="lv-${lv}"`;
           return `<td ${click} title="${esc(c.hint)}">${text}</td>`;
         }).join("")}</tr>`;
       }).join("")}
@@ -202,7 +203,7 @@ async function viewOverview(el, params, stale) {
   el.querySelectorAll(".task").forEach((c) => (c.onclick = () => (location.hash = `#/colours?cat=${c.dataset.cat}`)));
   el.querySelectorAll("td.cell").forEach((c) => (c.onclick = () => {
     filt.files = c.dataset.file; saveFilter();
-    location.hash = `#/colours?cat=${c.dataset.cat}`;
+    location.hash = c.dataset.href || `#/colours?cat=${c.dataset.cat}`;
   }));
 }
 
@@ -478,6 +479,66 @@ async function viewSearch(el, params) {
     mode === "text" ? "Проверьте написание или поищите по одному слову." : "Увеличьте допуск или уберите ограничение по типу слоя.");
 }
 
+/* ───────────────────── типографика ───────────────────── */
+
+const TCATS = [
+  { k: "unbound", t: "Не привязаны", hint: "Шрифт, кегль и интерлиньяж точно как у стиля системы, но стиль не назначен. Назначьте стиль — внешне ничего не изменится." },
+  { k: "near", t: "Почти стиль", hint: "Тот же шрифт и вес, но кегль или интерлиньяж чуть другие — часто это масштабированный текст. Замените на стиль." },
+  { k: "off", t: "Мимо системы", hint: "Такого сочетания в системе нет: другой шрифт, вес или размер. Решите, нужен ли новый стиль, или замените на существующий." },
+  { k: "all", t: "Все", hint: "Все сочетания шрифта у текстов без стиля." },
+];
+
+function fontSample(f) {
+  const size = Math.max(11, Math.min(f.size || 14, 26));
+  return `<span class="fsample" style="font-family:'${esc(f.family).replace(/'/g, "")}',sans-serif;font-weight:${f.weight || 400};font-size:${size}px">Аа</span>`;
+}
+function fontWhat(i) {
+  if (i.status === "unbound") return `<span class="tag unbound">не привязан</span>как стиль <b>${i.styles.map(esc).join(", ")}</b>`;
+  const n = i.nearest;
+  if (!n) return i.family_known
+    ? `<span class="tag off">мимо системы</span>шрифт ${esc(i.font.family)} в системе есть, но не в этом начертании`
+    : `<span class="tag off">мимо системы</span>шрифта ${esc(i.font.family)} в системе нет вовсе`;
+  const diff = [n.dsize ? `кегль ${n.dsize > 0 ? "+" : ""}${String(n.dsize).replace(".", ",")}` : "", n.dline ? `интерлиньяж ${n.dline > 0 ? "+" : ""}${String(n.dline).replace(".", ",")}` : ""].filter(Boolean).join(", ");
+  return `${i.status === "near" ? '<span class="tag near">почти стиль</span>' : '<span class="tag off">мимо системы</span>'}ближе всего <b>${esc(n.name)}</b> ${esc(n.label)}${diff ? " — " + diff : ""}`;
+}
+
+async function viewTypography(el, params, stale) {
+  renderFilters(true);
+  const cat = params.get("cat") || "unbound";
+  const d = await api("/api/typography" + fq());
+  if (stale()) return;
+  const counts = Object.fromEntries(TCATS.map((c) => [c.k, d.items.filter((i) => c.k === "all" || i.status === c.k).reduce((n, i) => n + i.uses, 0)]));
+  const active = TCATS.find((c) => c.k === cat) || TCATS[0];
+  const items = d.items.filter((i) => active.k === "all" || i.status === active.k);
+  const loose = d.items.reduce((n, i) => n + i.uses, 0);
+  el.innerHTML = `
+    <p class="sub" style="margin-top:0">Система выведена из самих макетов: ${fmt(d.styles.length)} ${plural(d.styles.length, "стиль", "стиля", "стилей")} по текстам, где стиль назначен. С ней сравниваются ${fmt(loose)} ${plural(loose, "текст", "текста", "текстов")} без стиля — только положенные на экран вручную: внутри компонентов типографику задаёт библиотека.</p>
+    <div class="cats">${TCATS.map((c) => `<button class="${c.k === active.k ? "on" : ""}" data-cat="${c.k}">${c.t}<em>${fmt(counts[c.k])}</em></button>`).join("")}</div>
+    <p class="hint">${esc(active.hint)}</p>
+    <div id="flist">${items.length ? "" : '<div class="empty"><b>Здесь пусто</b><p>Под текущими фильтрами таких текстов нет.</p></div>'}</div>
+    <h2>Стили системы</h2>
+    <p class="sub">Как они на самом деле используются: самое частое сочетание шрифта у каждого стиля.</p>
+    <div class="styles">${d.styles.map((s) => `<div class="srow">${fontSample(s.font)}<div class="name">${esc(s.name)}<small>${esc(s.label)}</small></div><div class="num">${fmt(s.uses)} <span class="muted">${plural(s.uses, "текст", "текста", "текстов")}</span></div></div>`).join("")}</div>`;
+  el.querySelectorAll("[data-cat]").forEach((b) => (b.onclick = () => (location.hash = `#/typography?cat=${b.dataset.cat}`)));
+  $("#flist").insertAdjacentHTML("beforeend", items.map((i, n) => `
+    <div class="crow frow" data-n="${n}">${fontSample(i.font)}
+      <div class="name">${esc(i.label)}<small>${esc(i.font.family)}${i.first_seen ? " · с " + esc(day(i.first_seen)) : ""}</small></div>
+      <div class="num">${fmt(i.uses)} <span class="muted">${plural(i.uses, "текст", "текста", "текстов")}</span></div>
+      <div class="num c-screens">${fmt(i.screens)} <span class="muted">${plural(i.screens, "экран", "экрана", "экранов")}</span></div>
+      <div class="num c-files">${fmt(i.files)} <span class="muted">${plural(i.files, "файл", "файла", "файлов")}</span></div>
+      <div class="what">${fontWhat(i)}</div></div>`).join(""));
+  el.querySelectorAll(".frow").forEach((r) => (r.onclick = () => {
+    const next = r.nextElementSibling;
+    if (next && next.classList.contains("places")) { next.remove(); r.classList.remove("open"); return; }
+    r.classList.add("open");
+    const box = document.createElement("div");
+    box.className = "places";
+    r.after(box);
+    const base = { kind: "font", font: items[+r.dataset.n].font_id };
+    screensBlock(box, (offset) => "/api/search" + fq({ ...base, offset }), (g) => "/api/search" + fq({ ...base, file_key: g.file_key, screen: g.screen_id || "" }));
+  }));
+}
+
 /* ───────────────────── компоненты ───────────────────── */
 
 async function viewComponents(el, params, stale) {
@@ -618,7 +679,7 @@ async function viewSettings(el, params, stale) {
 
 /* ───────────────────── маршруты ───────────────────── */
 
-const VIEWS = { "": viewOverview, colours: viewColours, search: viewSearch, components: viewComponents, sources: viewSources, settings: viewSettings };
+const VIEWS = { "": viewOverview, colours: viewColours, search: viewSearch, typography: viewTypography, components: viewComponents, sources: viewSources, settings: viewSettings };
 // Номер текущего перехода. Медленный ответ предыдущего экрана не должен затереть уже
 // открытый следующий: общая картина считается дольше, чем открываются цвета.
 let routeSeq = 0;

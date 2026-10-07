@@ -23,7 +23,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import db as dbm
-from . import health, inventory, rules, search, tokens
+from . import health, inventory, rules, search, tokens, typography
 from .filters import Filter
 from .load import update_all
 from .textnorm import norm
@@ -247,6 +247,8 @@ class Handler(BaseHTTPRequestHandler):
                                          label="COALESCE(n.text, n.name)" if kind == "text" else "n.name")
                     res.update(info)
                     return self._json(res)
+                if u.path == "/api/typography":
+                    return self._json(typography.fonts(con, filt))
                 if u.path == "/api/components":
                     return self._json(search.components(con, filt, (q.get("q") or [""])[0]))
                 if u.path == "/api/detached":
