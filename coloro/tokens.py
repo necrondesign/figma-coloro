@@ -54,7 +54,7 @@ def _kind(t) -> str:
     return _KINDS.get(str(t or "").replace("_", "").replace("-", "").lower(), str(t or "").lower() or "other")
 
 
-def _row(name, kind, value, mode="", collection="", scope="", library="") -> dict:
+def _row(name, kind, value, mode="", collection="", scope="", library="", key="") -> dict:
     """Одна строка справочника: токен в одной теме. Цвет разобран в RRGGBB и прозрачность."""
     raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False) if value is not None else ""
     c = colorm.parse(raw) if kind in ("color", "other", "") or not kind else None
@@ -62,7 +62,8 @@ def _row(name, kind, value, mode="", collection="", scope="", library="") -> dic
         kind = "color"
     return {"name": str(name).strip(), "type": kind, "mode": str(mode or ""), "value": raw.strip(),
             "color": c[0] if c and kind == "color" else None, "alpha": c[1] if c and kind == "color" else None,
-            "collection": str(collection or ""), "scope": str(scope or ""), "library": str(library or "")}
+            "collection": str(collection or ""), "scope": str(scope or ""), "library": str(library or ""),
+            "key": str(key or "")}
 
 
 def _from_tree(data) -> list[dict]:
@@ -120,15 +121,16 @@ def _from_list(items) -> list[dict]:
         kind = _kind(it.get("type") or it.get("resolvedType"))
         coll = str(it.get("collection") or "")
         scope = ",".join(it.get("scopes") or []) if isinstance(it.get("scopes"), list) else str(it.get("scope") or "")
+        key = str(it.get("key") or "")
         vals = it.get("values") or it.get("valuesByMode")
         if isinstance(vals, dict):
             for mode, v in vals.items():
-                out.append(_row(name, kind, v, mode, coll, scope))
+                out.append(_row(name, kind, v, mode, coll, scope, "", key))
         elif isinstance(vals, list):
             for i, v in enumerate(vals):
-                out.append(_row(name, kind, v, str(i + 1), coll, scope))
+                out.append(_row(name, kind, v, str(i + 1), coll, scope, "", key))
         else:
-            out.append(_row(name, kind, it.get("value"), "", coll, scope))
+            out.append(_row(name, kind, it.get("value"), "", coll, scope, "", key))
     return out
 
 
@@ -151,6 +153,7 @@ def _from_csv(text: str) -> list[dict]:
     col = lambda *names: next((i for i, h in enumerate(head) if h in names), None)
     type_i, coll_i = col("тип", "type"), col("коллекция", "collection")
     scope_i, lib_i = col("скоуп", "scope", "scopes"), col("библиотека", "library")
+    key_i = col("ключ", "key", "variable key")
     get = lambda r, i: r[i].strip() if i is not None and i < len(r) else ""
     out = []
     for r in rows[1:]:
@@ -158,18 +161,18 @@ def _from_csv(text: str) -> list[dict]:
         if not name:
             continue
         kind = _kind(get(r, type_i)) if get(r, type_i) else ""
-        coll, scope, lib = get(r, coll_i), get(r, scope_i), get(r, lib_i)
+        coll, scope, lib, key = get(r, coll_i), get(r, scope_i), get(r, lib_i), get(r, key_i)
         values = [(labels[i] if len(value_is) > 1 else "", get(r, i)) for i in value_is]
         filled = [(m, v) for m, v in values if v]
         if not filled:
             # Значения в файле нет (так бывает у чисел и строк в выгрузках) — токен всё равно
             # есть в системе, показываем его с пометкой.
-            out.append(_row(name, kind or "other", "", "", coll, scope, lib))
+            out.append(_row(name, kind or "other", "", "", coll, scope, lib, key))
             continue
         for m, v in filled:
             # Несколько колонок значений — это темы (режимы переменной): имя темы — заголовок
             # колонки, как его назвал человек.
-            out.append(_row(name, kind, v, m, coll, scope, lib))
+            out.append(_row(name, kind, v, m, coll, scope, lib, key))
     return out
 
 
@@ -221,14 +224,14 @@ def store(con, rows: list, filename: str, project: int | None = None) -> int:
     кортежи parse."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     full = [r if isinstance(r, dict) else {"name": r[0], "type": "color", "mode": r[3], "value": "#" + r[1],
-                                            "color": r[1], "alpha": r[2], "collection": r[4], "scope": "", "library": ""}
+                                            "color": r[1], "alpha": r[2], "collection": r[4], "scope": "", "library": "", "key": ""}
             for r in rows]
     with dbm.writing(con):
         con.execute("DELETE FROM tokens WHERE project_id IS ?", (project,))
-        con.executemany("INSERT INTO tokens (name, color, alpha, mode, collection, project_id, type, value, scope, library)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        con.executemany("INSERT INTO tokens (name, color, alpha, mode, collection, project_id, type, value, scope, library, key)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         [(r["name"], r["color"], r["alpha"], r["mode"], r["collection"], project, r["type"], r["value"],
-                          r["scope"], r["library"]) for r in full])
+                          r["scope"], r["library"], r.get("key") or "") for r in full])
         if project is not None:
             con.execute("UPDATE projects SET tokens_file = ?, tokens_loaded_at = ? WHERE id = ?", (filename, now, project))
         else:
@@ -432,27 +435,56 @@ def _number_kinds(name: str, scope: str) -> tuple:
     return _SCOPE_KINDS[""]
 
 
-def catalog(con, project, idx: "Index", colours: list[dict], props: dict) -> dict:
-    """Все токены проекта одной страницей: по переменной — вид, коллекция, область, значения
-    по темам и сколько раз значение встречается в макетах.
+def var_key(var: str) -> tuple[str | None, str]:
+    """«VariableID:<ключ>/<id>» → (ключ, id); у своей переменной файла ключа нет: (None, id)."""
+    rest = var.split(":", 1)[1] if ":" in var else var
+    if "/" in rest:
+        k, local = rest.split("/", 1)
+        return k, local
+    return None, rest
 
-    props: {(вид числа, значение): применений} из макетов — для сверки числовых токенов."""
+
+def catalog(con, project, idx: "Index", colours: list[dict], props: dict, binds: list | None = None) -> dict:
+    """Все токены проекта одной страницей: по переменной — вид, коллекция, область, значения
+    по темам и сколько раз она встречается в макетах.
+
+    props: {(вид числа, значение): применений} — для сверки числовых токенов.
+    binds: [(переменная, RRGGBB, прозрачность, применений, экранов, файлов)] — какие переменные
+    привязаны в макетах на самом деле. Если в справочнике есть ключи переменных, привязки
+    сопоставляются с токенами точно, а не по совпадению цвета."""
+    binds = binds or []
     if idx.source == "files":
         rows = [{"name": n, "type": "color", "mode": m or "", "value": "#" + c, "color": c, "alpha": a,
-                 "collection": coll or "", "scope": "", "library": ""} for n, c, a, m, coll in idx.all_rows]
+                 "collection": coll or "", "scope": "", "library": "", "key": ""}
+                for n, c, a, m, coll in idx.all_rows if not n.startswith("Variable · ")]
     else:
-        rows = [dict(zip(("name", "type", "mode", "value", "color", "alpha", "collection", "scope", "library"), r))
+        rows = [dict(zip(("name", "type", "mode", "value", "color", "alpha", "collection", "scope", "library", "key"), r))
                 for r in con.execute("SELECT name, IFNULL(type, 'color'), IFNULL(mode, ''), IFNULL(value, ''), color, alpha,"
-                                     " IFNULL(collection, ''), IFNULL(scope, ''), IFNULL(library, '') FROM tokens"
-                                     " WHERE project_id IS ? ORDER BY rowid", (project,))]
+                                     " IFNULL(collection, ''), IFNULL(scope, ''), IFNULL(library, ''), IFNULL(key, '')"
+                                     " FROM tokens WHERE project_id IS ? ORDER BY rowid", (project,))]
     themes = themes_of([(r["name"], r["color"], r["alpha"], r["mode"], r["collection"]) for r in rows])
     order = {m: i for i, m in enumerate(themes)}
     by_value = {(c["color"], c["alpha"]): c for c in colours}
+
+    # Привязки по переменной: ключ библиотечной или id своей.
+    bound: dict[str, dict] = {}
+    for var, c, a, uses, screens, files in binds:
+        k, local = var_key(var)
+        b = bound.setdefault(k or local, {"key": k, "local": local, "uses": 0, "screens": 0, "files": 0, "values": {}})
+        b["uses"] += uses
+        b["screens"] = max(b["screens"], screens)
+        b["files"] = max(b["files"], files)
+        b["values"][(c, a)] = b["values"].get((c, a), 0) + uses
+    lib_keys = {r["key"] for r in rows if r["key"]}
+    exact = bool(lib_keys) or idx.source == "files"
+
     groups: dict[tuple, dict] = {}
     for r in rows:
         key = (r["name"], r["type"], r["collection"], r["library"])
         g = groups.setdefault(key, {"name": r["name"], "type": r["type"], "collection": r["collection"],
-                                    "library": r["library"], "scope": r["scope"], "values": []})
+                                    "library": r["library"], "scope": r["scope"], "values": [], "keys": set()})
+        if r["key"]:
+            g["keys"].add(r["key"])
         if r["scope"] and r["scope"] not in g["scope"]:
             g["scope"] = ",".join(x for x in (g["scope"], r["scope"]) if x)
         if not r["value"] and not r["color"]:
@@ -464,6 +496,20 @@ def catalog(con, project, idx: "Index", colours: list[dict], props: dict) -> dic
             v.update(uses=used.get("uses", 0), raw=used.get("raw", 0), screens=used.get("screens", 0), files=used.get("files", 0))
         if not any(x["mode"] == v["mode"] and x["value"] == v["value"] for x in g["values"]):
             g["values"].append(v)
+
+    # Переменные, привязанные в макетах, которых нет в справочнике (или справочника нет вовсе):
+    # имени Figma не отдаёт, но значения одной переменной собираются вместе.
+    for b in bound.values():
+        if b["key"] and b["key"] in lib_keys:
+            continue
+        coll = "Variables in the files" if idx.source == "files" else "Bound in the files, not in the library"
+        short = (b["key"] or b["local"])[:10]
+        g = {"name": f"Variable {short}", "type": "color", "collection": coll, "library": "", "scope": "",
+             "keys": {b["key"] or b["local"]}, "unknown": True,
+             "values": [{"mode": "", "value": "#" + c, "color": c, "alpha": a, "uses": n, "raw": 0, "screens": 0,
+                         "files": 0, "from_name": False} for (c, a), n in sorted(b["values"].items(), key=lambda kv: -kv[1])]}
+        groups[("~var", short, coll, "")] = g
+
     out = []
     for g in groups.values():
         g["values"].sort(key=lambda v: order.get(v["mode"], -1))
@@ -488,8 +534,16 @@ def catalog(con, project, idx: "Index", colours: list[dict], props: dict) -> dic
         g["raw"] = sum(v["raw"] for v in g["values"])
         g["screens"] = max((v["screens"] for v in g["values"]), default=0)
         g["files"] = max((v["files"] for v in g["values"]), default=0)
+        # Точные привязки: сколько раз именно эта переменная стоит в макетах.
+        bs = [bound[k] for k in g.pop("keys") if k in bound]
+        g["bound"] = sum(b["uses"] for b in bs) if (exact or bs) else None
+        if bs:
+            g["screens"] = max(g["screens"], max(b["screens"] for b in bs))
+            g["files"] = max(g["files"], max(b["files"] for b in bs))
         g["empty"] = not g["values"]
         out.append(g)
-    out.sort(key=lambda g: (["color", "number", "string", "typography", "shadow"].index(g["type"])
-                            if g["type"] in ("color", "number", "string", "typography", "shadow") else 9, -g["uses"], g["name"]))
-    return {"themes": themes, "items": out, "library": idx.source, "theme": idx.theme}
+    rank = {"color": 0, "number": 1, "string": 2, "typography": 3, "shadow": 4}
+    out.sort(key=lambda g: (rank.get(g["type"], 9), -g["uses"], g["name"]))
+    return {"themes": themes, "items": out, "library": idx.source, "theme": idx.theme, "exact": exact,
+            "keys": len(lib_keys), "bound_total": sum(b["uses"] for b in bound.values()),
+            "bound_unknown": sum(1 for b in bound.values() if not (b["key"] and b["key"] in lib_keys))}

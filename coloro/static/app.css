@@ -371,3 +371,4 @@ body.light .scrolling::-webkit-scrollbar-thumb{background:rgba(0,0,0,.25)}
 .vtable .sw2{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid var(--line);flex:none}
 .tico{width:14px;height:14px;border-radius:3px;background:var(--btn);display:inline-grid;place-items:center;font-size:9px;color:var(--label);flex:none}
 @media (max-width:1200px){ .tokwrap{grid-template-columns:1fr} .tgroups{position:static;max-height:none;flex-direction:row;flex-wrap:wrap} }
+.tmulti{display:inline-flex;flex-wrap:wrap;gap:4px 10px;align-items:center}

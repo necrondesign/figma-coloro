@@ -431,7 +431,8 @@ class Handler(BaseHTTPRequestHandler):
                     "SELECT p.kind, p.value, COUNT(*) FROM props p JOIN nodes n ON n.file_key = p.file_key AND n.id = p.node_id"
                     + NODE_JOIN + f" WHERE {where} AND {scales.MANUAL} GROUP BY p.kind, p.value", args)}
             props = remember("number-uses", number_uses)
-            return self._json(tokens.catalog(con, filt.project, idx, items, props))
+            binds = remember("bindings", lambda: inventory.bindings(con, filt))
+            return self._json(tokens.catalog(con, filt.project, idx, items, props, binds))
         if path == "/api/tokens/usage":
             items = remember("colours", lambda: inventory.colours(con, filt, idx))
             return self._json({"items": tokens.usage(idx, items), "library": idx.source,

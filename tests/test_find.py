@@ -227,6 +227,41 @@ class Projects(unittest.TestCase):
         tokens.store(self.con, tokens.parse("name,value\nbrand/green,#008000\n"), "kit.csv", a)
         self.assertEqual(tokens.load(self.con, a).source, "library")
 
+    def test_exact_bindings_by_variable_key(self):
+        # Два токена с одним цветом: привязка по ключу говорит, какой из них стоит на самом деле.
+        a = server.create_project(self.con, "App")["id"]
+        server.add_source(self.con, "https://www.figma.com/design/KA/x", None, a)
+        pink = lambda vid: solid(1, 0, 111 / 255, boundVariables={"color": {"type": "VARIABLE_ALIAS", "id": vid}})
+        load_file(self.con, FakeFigma([page("1:1", "Stage", [node("s", "FRAME", children=[
+            node("a", fills=[pink("VariableID:KEYPINK/1:1")]), node("b", fills=[pink("VariableID:KEYPINK/1:1")]),
+            node("c", fills=[pink("VariableID:KEYOTHER/9:9")]), node("d", fills=[solid(1, 0, 111 / 255)])])])]), "KA")
+        csv_text = "Ключ;Имя;Тип;Главное значение\nKEYPINK;brand/pink;COLOR;#FF006F\nKEYALSO;brand/also-pink;COLOR;#FF006F\n"
+        tokens.store(self.con, tokens.parse_all(csv_text), "kit.csv", a)
+        f = Filter(project=a)
+        idx = tokens.load(self.con, a)
+        cat = tokens.catalog(self.con, a, idx, inventory.colours(self.con, f, idx), {}, inventory.bindings(self.con, f))
+        by = {g["name"]: g for g in cat["items"]}
+        self.assertTrue(cat["exact"])
+        self.assertEqual(by["brand/pink"]["bound"], 2)
+        self.assertEqual(by["brand/also-pink"]["bound"], 0)       # тот же цвет, но не привязан нигде
+        unknown = [g for g in cat["items"] if g.get("unknown")]
+        self.assertEqual([(g["name"], g["bound"]) for g in unknown], [("Variable KEYOTHER", 1)])
+
+    def test_variables_grouped_without_library(self):
+        # Справочника нет: значения одной переменной (две темы на разных экранах) — одна строка.
+        a = server.create_project(self.con, "App")["id"]
+        server.add_source(self.con, "https://www.figma.com/design/KA/x", None, a)
+        v = lambda r, g, b: solid(r, g, b, boundVariables={"color": {"type": "VARIABLE_ALIAS", "id": "VariableID:12:34"}})
+        load_file(self.con, FakeFigma([page("1:1", "Stage", [node("s", "FRAME", children=[
+            node("a", fills=[v(1, 1, 1)]), node("b", fills=[v(0, 0, 0)])])])]), "KA")
+        f = Filter(project=a)
+        idx = tokens.load(self.con, a)
+        cat = tokens.catalog(self.con, a, idx, inventory.colours(self.con, f, idx), {}, inventory.bindings(self.con, f))
+        var = [g for g in cat["items"] if g.get("unknown")]
+        self.assertEqual(len(var), 1)
+        self.assertEqual(sorted(x["color"] for x in var[0]["values"]), ["000000", "FFFFFF"])
+        self.assertEqual(var[0]["bound"], 2)
+
     def test_token_library_per_project(self):
         a = server.create_project(self.con, "App")["id"]
         b = server.create_project(self.con, "Site")["id"]

@@ -104,6 +104,16 @@ def colours(con, filt: Filter, idx: Index, rows: list[tuple] | None = None) -> l
     return out
 
 
+def bindings(con, filt: Filter) -> list[tuple]:
+    """Какие переменные привязаны к цветам в макетах: (переменная, RRGGBB, прозрачность,
+    применений, экранов, файлов). Один проход по краскам."""
+    where, args = filt.where(paints=True)
+    return con.execute(
+        "SELECT v.v, p.color, p.alpha, COUNT(*), COUNT(DISTINCT p.file_key || '|' || IFNULL(p.screen, '')),"
+        " COUNT(DISTINCT p.file_key) FROM paints p JOIN vals v ON v.id = p.var" + JOIN +
+        f" WHERE p.var IS NOT NULL AND {where} GROUP BY v.v, p.color, p.alpha", args).fetchall()
+
+
 def gradients(con, filt: Filter) -> list[dict]:
     """Градиенты как рецепты: вид и стопы по порядку. Одинаковый рецепт в разных местах — одна строка.
 

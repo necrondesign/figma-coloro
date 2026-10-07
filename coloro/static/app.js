@@ -1034,7 +1034,9 @@ async function viewTokensPage(el, stale) {
   const inColl = d.items.filter((t) => collName(t) === sh.coll);
   const q = (sh.q || "").toLowerCase().replace("#", "");
   const kind = (t) => (TOKEN_TYPES.some(([k]) => k === t.type) ? t.type : "other");
-  const usage = (t, k) => k === "all" || (k === "used" ? t.uses > 0 : k === "unused" ? !t.uses && !t.empty : k === "themed" ? !t.constant : k === "byhand" ? t.raw > 0 : t.empty);
+  // Использование: точно по привязкам, если они известны, иначе по совпадению значения.
+  const used = (t) => (d.exact && t.type === "color" ? t.bound > 0 : t.uses > 0);
+  const usage = (t, k) => k === "all" || (k === "used" ? used(t) : k === "unused" ? !used(t) && !t.empty : k === "themed" ? !t.constant : k === "byhand" ? t.raw > 0 : t.empty);
   const base = inColl.filter((t) => (sh.type === "all" || kind(t) === sh.type) && usage(t, sh.cat)
     && (!q || t.name.toLowerCase().includes(q) || t.values.some((v) => String(v.value).toLowerCase().includes(q))));
   const groupOf = (t) => t.name.includes("/") ? t.name.slice(0, t.name.lastIndexOf("/")) : "";
@@ -1073,29 +1075,39 @@ async function viewTokensPage(el, stale) {
     return `<span class="tcell mono" title="${esc(v.value)}">${esc(String(v.value).slice(0, 60))}${v.from_name ? ' <span class="muted">from name</span>' : ""}</span>`;
   };
   const valueIn = (t, m) => t.constant ? t.values[0] : t.values.find((v) => v.mode === m);
+  // Без тем, но с несколькими значениями (переменная из файлов) — все значения в одной ячейке.
+  const cellFor = (t, m) => (!m && !t.constant && t.values.length > 1
+    ? `<span class="tmulti">${t.values.slice(0, 6).map((v) => cell(t, v)).join("")}${t.values.length > 6 ? `<span class="muted">+${t.values.length - 6}</span>` : ""}</span>`
+    : cell(t, valueIn(t, m)));
   const status = (t) => t.empty ? '<span class="tag plain">No value in the file</span>'
-    : !t.uses ? (t.type === "color" || (t.type === "number" && t.kinds && t.kinds.length) ? '<span class="tag off">Unused</span>' : '<span class="muted">—</span>')
-    : t.raw ? `<span class="tag unbound">Set by hand ${num(t.raw)}</span>` : '<span class="tag token">Used</span>';
+    : t.unknown ? '<span class="tag near">Not in the library</span>'
+    : !used(t) ? (t.type === "color" || (t.type === "number" && t.kinds && t.kinds.length) ? '<span class="tag off">Unused</span>' : '<span class="muted">—</span>')
+    : t.raw ? '<span class="tag unbound">Also typed by hand</span>' : '<span class="tag token">Used</span>';
+  const exactCols = d.exact;
   let lastGroup = null;
   const rows = items.map((t, n) => {
     const g = groupOf(t);
-    const head = byName && g !== lastGroup ? `<tr class="tgroup"><td colspan="${cols.length + 3}">${esc(g || "No group")}</td></tr>` : "";
+    const head = byName && g !== lastGroup ? `<tr class="tgroup"><td colspan="${cols.length + (exactCols ? 4 : 3)}">${esc(g || "No group")}</td></tr>` : "";
     lastGroup = g;
     const icon = t.type === "color" ? `<span class="sw2" style="background:#${(t.values[0] || {}).color || "transparent"}"></span>` : TYPE_ICON[kind(t)] || TYPE_ICON.other;
     return `${head}<tr class="trow" data-n="${n}"><td class="tname">${icon}<span title="${esc(t.name)}">${esc(byName ? t.name.slice(g ? g.length + 1 : 0) : t.name)}</span>${t.scope && t.scope !== "ALL_SCOPES" ? `<span class="muted tscope">${esc(t.scope.toLowerCase().replace(/_/g, " "))}</span>` : ""}</td>
-      ${cols.map((m) => `<td>${cell(t, valueIn(t, m))}</td>`).join("")}
-      <td class="num">${t.uses ? num(t.uses) : '<span class="muted">0</span>'}</td><td>${status(t)}</td></tr>`;
+      ${cols.map((m) => `<td>${cellFor(t, m)}</td>`).join("")}
+      ${exactCols ? `<td class="num">${t.type === "color" ? (t.bound ? num(t.bound) : '<span class="muted">0</span>') : t.uses ? num(t.uses) : '<span class="muted">0</span>'}</td>
+        <td class="num">${t.raw ? num(t.raw) : '<span class="muted">—</span>'}</td>`
+        : `<td class="num">${t.uses ? num(t.uses) : '<span class="muted">0</span>'}</td>`}<td>${status(t)}</td></tr>`;
   }).join("");
   el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens</h1><p class="sub">${d.library === "files"
       ? "No token library is loaded, so this is the system taken from the files: every color used through a style or a variable. Style names are shown; variable names need a token library."
-      : `${pl(inColl.length, "variable")} in this collection${modes.length > 1 ? `, ${pl(modes.length, "mode")}` : ""}. Uses count values equal to the token in the files: Figma reports which variable is bound only on the Enterprise plan.`}</p></div></div>
+      : `${pl(inColl.length, "variable")} in this collection${modes.length > 1 ? `, ${pl(modes.length, "mode")}` : ""}. ${d.exact ? "“Bound” counts layers bound to the variable itself, matched by the variable key; “Typed by hand” counts the same value set without a variable." : "Uses count values equal to the token in the files. Add a “key” column to the library to count exact bindings."}`}</p></div></div>
     ${colls.length > 1 ? `<div class="seg tcolls">${colls.map((c) => `<button class="${c === sh.coll ? "on" : ""}" data-coll="${esc(c)}">${esc(c || "No collection")}</button>`).join("")}</div>` : ""}
     <div class="tokwrap">
       <nav class="tgroups"><button class="${!sh.group ? "on" : ""}" data-grp="">All variables<em>${num(base.length)}</em></button>
         ${groups.map((g) => `<button class="${sh.group === g ? "on" : ""}" data-grp="${esc(g)}" style="padding-left:${8 + (g.split("/").length - 1) * 12}px">${esc(g.split("/").pop())}<em>${num(tree[g])}</em></button>`).join("")}</nav>
       <div class="tablew"><table class="vtable">
-        <thead><tr><th>Name</th>${cols.map((m) => `<th>${esc(modeName(m) || "Value")}</th>`).join("")}<th class="num">In files</th><th></th></tr></thead>
-        <tbody>${rows || `<tr><td colspan="${cols.length + 3}" class="muted" style="padding:16px">No tokens match the options.</td></tr>`}</tbody></table></div>
+        <thead><tr><th>Name</th>${cols.map((m) => `<th>${esc(modeName(m) || "Value")}</th>`).join("")}${exactCols
+          ? '<th class="num" title="How many times layers are bound to this variable">Bound</th><th class="num" title="How many times its value is typed in by hand">Typed by hand</th>'
+          : '<th class="num" title="How many times its value appears in the files">In files</th>'}<th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="${cols.length + (exactCols ? 4 : 3)}" class="muted" style="padding:16px">No tokens match the options.</td></tr>`}</tbody></table></div>
     </div>`;
   el.querySelectorAll("[data-coll]").forEach((b) => (b.onclick = () => { sh.coll = b.dataset.coll; sh.group = ""; save(); route(); }));
   el.querySelectorAll("[data-grp]").forEach((b) => (b.onclick = () => { sh.group = b.dataset.grp; save(); route(); }));
@@ -1106,7 +1118,7 @@ async function viewTokensPage(el, stale) {
     const t = items[+r.dataset.n];
     const tr = document.createElement("tr");
     tr.className = "tplaces";
-    tr.innerHTML = `<td colspan="${cols.length + 3}"><div class="places"></div></td>`;
+    tr.innerHTML = `<td colspan="${cols.length + (exactCols ? 4 : 3)}"><div class="places"></div></td>`;
     r.after(tr);
     const box = tr.querySelector(".places");
     const colorVals = t.values.filter((v) => v.color && v.uses);
@@ -1128,7 +1140,7 @@ async function viewTokensPage(el, stale) {
   }));
   {
     const colorT = d.items.filter((t) => t.type === "color" && !t.empty), numT = d.items.filter((t) => t.type === "number");
-    const unused = d.items.filter((t) => !t.uses && !t.empty && (t.type === "color" || (t.type === "number" && t.kinds && t.kinds.length)));
+    const unused = d.items.filter((t) => !t.unknown && !used(t) && !t.empty && (t.type === "color" || (t.type === "number" && t.kinds && t.kinds.length)));
     const byHand = d.items.filter((t) => t.raw > 0), empty = d.items.filter((t) => t.empty);
     summary(el, {
       tiles: [{ t: "Variables", v: num(new Set(d.items.map((t) => t.name)).size), sub: `${pl(colls.length, "collection")}` },
@@ -1137,6 +1149,7 @@ async function viewTokensPage(el, stale) {
       recs: [
         { n: byHand.length, title: `Bind ${pl(byHand.length, "token")} where they are set by hand`, text: "Their values appear in the files typed in manually.", go: () => { sh.cat = "byhand"; save(); route(); } },
         { n: unused.length, title: `Review ${pl(unused.length, "unused token")}`, text: "No color or number in the selected files equals these tokens. They may be obsolete, or the files drifted from the system.", go: () => { sh.cat = "unused"; save(); route(); } },
+        { n: d.bound_unknown, title: `${pl(d.bound_unknown, "variable")} bound in the files ${d.library === "files" ? "have no names" : "are missing from the library"}`, text: d.library === "files" ? "Figma does not give variable names on this plan. Load the token library to name them." : "Layers use variables this library does not contain: another library, local variables or deleted ones.", go: () => { const c = colls.find((x) => x.startsWith("Bound in the files") || x.startsWith("Variables in the files")); if (c) { sh.coll = c; sh.group = ""; save(); route(); } } },
         { n: empty.length, title: `${pl(empty.length, "token")} without a value in the library file`, text: "The export has names but no values for them, so they cannot be compared. Export the variables with values to include them.", go: () => { sh.cat = "empty"; save(); route(); } },
       ],
     });

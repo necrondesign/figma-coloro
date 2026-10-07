@@ -79,6 +79,12 @@ _STYLE_KEYS = {"fills": ("fill", "fills"), "strokes": ("stroke", "strokes")}
 _SLOT = {"fills": "fill", "strokes": "stroke"}
 
 
+def _var_id(var) -> str | None:
+    """Какая переменная привязана: «VariableID:<ключ>/<id>» у библиотечной, «VariableID:<id>» у
+    своей. По ключу привязка точно сопоставляется со справочником, без угадывания по цвету."""
+    return var.get("id") if isinstance(var, dict) and var.get("id") else None
+
+
 def paints_of(node: dict, styles: dict, intern) -> list[tuple]:
     """Все видимые краски слоя → (slot, kind, color, alpha, src, grad)."""
     out: list[tuple] = []
@@ -102,7 +108,7 @@ def paints_of(node: dict, styles: dict, intern) -> list[tuple]:
                 # и на самой краске (paint.boundVariables.color) — считаются обе.
                 var = (i < len(bvlist) and bvlist[i]) or (p.get("boundVariables") or {}).get("color")
                 a = (c.get("a") if c.get("a") is not None else 1) * (p.get("opacity") if p.get("opacity") is not None else 1)
-                out.append((slot, "solid", _hex(c), _pct(a), style_src or ("v" if var else None), None))
+                out.append((slot, "solid", _hex(c), _pct(a), style_src or ("v" if var else None), None, _var_id(var)))
             elif t.startswith("GRADIENT"):
                 stops = [s for s in p.get("gradientStops") or [] if isinstance(s, dict) and s.get("color")]
                 if not stops:
@@ -122,7 +128,7 @@ def paints_of(node: dict, styles: dict, intern) -> list[tuple]:
                     var = (s.get("boundVariables") or {}).get("color")
                     # У стопа — только его собственная прозрачность. Прозрачность краски
                     # целиком к цвету стопа не относится.
-                    out.append((slot, "stop", _hex(c), _pct(c.get("a", 1)), style_src or ("v" if var else None), gid))
+                    out.append((slot, "stop", _hex(c), _pct(c.get("a", 1)), style_src or ("v" if var else None), gid, _var_id(var)))
     return out
 
 
@@ -236,7 +242,7 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
         # а это на миллионах слоёв разница в разы.
         tail = (row[6], 1 if pinst else 0, row[7], screen, row[17])
         for p in paints_of(node, styles, intern):
-            out.paints.append((ctx.file_key, ctx.page_id, nid, *p, *tail))
+            out.paints.append((ctx.file_key, ctx.page_id, nid, *p[:6], *tail, intern(p[6]) if p[6] else None))
         # Отступы и эффекты сверяются только у положенного на экран вручную: внутри компонента
         # их задаёт библиотека. Хранить их там — 93% строк впустую.
         if pinst is None and ntype != "INSTANCE":
