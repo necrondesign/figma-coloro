@@ -27,7 +27,10 @@ body.light{color-scheme:light}
 body{
   margin:0; background:var(--bg); color:var(--txt);
   /* Цифры одной ширины: единица не уже девятки, столбцы чисел не гуляют. */
-  font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;
+  font-variant-numeric:tabular-nums;
+  /* calt выключен: шрифт превращает «->» в «→», а в названиях слоёв это вводит в заблуждение —
+     дизайнер ищет «->», а видит стрелку. */
+  font-feature-settings:"tnum" 1, "calt" 0; font-variant-ligatures:no-contextual;
   font-family:Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   font-size:12px; line-height:1.45; -webkit-font-smoothing:antialiased;
 }
@@ -174,6 +177,18 @@ h2:first-child{margin-top:0}
   padding:1px 5px;border-radius:var(--r-xs)}
 .place .when{color:var(--muted);font-size:10.5px;margin-left:6px}
 
+/* ── компоненты ─────────────────────────────────── */
+.krow{display:grid;grid-template-columns:minmax(0,1.6fr) 110px 100px 70px 120px;gap:10px;align-items:center;
+  padding:8px;border-radius:var(--r-sm);cursor:pointer}
+.krow:hover,.krow.open{background:var(--btn)}
+.krow .name{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.krow .name small{display:block;font-weight:400;color:var(--muted);font-size:10.5px}
+.facets{display:flex;flex-direction:column;gap:6px;margin:4px 0 10px}
+.facet{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.facet .label{min-width:70px;font-size:11px}
+.tasks.finds .task{color:var(--txt);text-decoration:none}
+.tasks.finds .task b{margin-bottom:3px}
+
 /* ── источники ─────────────────────────────────────── */
 .src{background:var(--panel);border-radius:var(--r);padding:10px 12px;margin-bottom:6px}
 .src .top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -205,6 +220,8 @@ h2:first-child{margin-top:0}
   .crow .c-files,.crow .c-screens,.crow .what{display:none}
   .places{margin-left:12px}
   .scr{grid-template-columns:minmax(0,1fr) auto}
+  .krow{grid-template-columns:minmax(0,1fr) 90px}
+  .krow .c-screens,.krow .c-files,.krow .num:last-child{display:none}
   .scr .cnt{display:none}
   .map{table-layout:auto}
   .map-wrap{overflow-x:auto}

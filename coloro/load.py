@@ -30,7 +30,7 @@ from .walk import Ctx, Out, child_ctx, walk
 BATCH = 8          # верхних слоёв страницы в одном запросе
 MAX_DEPTH = 40     # насколько глубоко можно раскрывать один слой, если он не скачивается целиком
 
-NODE_COLS = 20
+NODE_COLS = 23
 PAINT_COLS = 9
 
 
@@ -62,6 +62,7 @@ def _fetch_into(figma: Figma, key: str, ids: list[str], ctx: Ctx, styles: dict, 
         if not entry or not entry.get("document"):
             return
         styles.update(entry.get("styles") or {})
+        _collect_components(entry, out)
         node = entry["document"]
         walk(node, ctx, styles, intern, first_seen, now, out, children=False)
         kids = [k.get("id") for k in node.get("children") or [] if k.get("id")]
@@ -74,7 +75,18 @@ def _fetch_into(figma: Figma, key: str, ids: list[str], ctx: Ctx, styles: dict, 
         if not entry or not entry.get("document"):
             continue                       # слой удалили между запросами
         styles.update(entry.get("styles") or {})
+        _collect_components(entry, out)
         walk(entry["document"], ctx, styles, intern, first_seen, now, out)
+
+
+def _collect_components(entry: dict, out: Out) -> None:
+    """Справочник компонентов приходит в каждом ответе /nodes — собираем его на страницу."""
+    sets = entry.get("componentSets") or {}
+    for cid, c in (entry.get("components") or {}).items():
+        sid = c.get("componentSetId")
+        out.components[cid] = (cid, c.get("key"), c.get("name"), sid,
+                               (sets.get(sid) or {}).get("name") if sid else None,
+                               1 if c.get("remote") else 0)
 
 
 def _write_page(con, key: str, page: dict, position: int, version: str, out: Out, now: str) -> None:
@@ -84,6 +96,8 @@ def _write_page(con, key: str, page: dict, position: int, version: str, out: Out
         con.execute("DELETE FROM paints WHERE file_key = ? AND page_id = ?", (key, pid))
         con.executemany(f"INSERT OR REPLACE INTO nodes VALUES ({','.join('?' * NODE_COLS)})", out.nodes)
         con.executemany(f"INSERT INTO paints VALUES ({','.join('?' * PAINT_COLS)})", out.paints)
+        con.executemany("INSERT OR REPLACE INTO components VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        [(key, *c) for c in out.components.values()])
         con.execute(
             "INSERT OR REPLACE INTO pages (file_key, page_id, name, archived, position, version, loaded_at,"
             " status, error, nodes) VALUES (?, ?, ?, ?, ?, ?, ?, 'ok', NULL, ?)",

@@ -12,9 +12,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from .textnorm import norm
+
 # Формат данных. Поднимается, когда меняется то, что извлекается из макета:
 # файлы, загруженные в старом формате, при следующем обновлении перезагружаются.
-FORMAT = 2
+FORMAT = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
@@ -53,11 +55,14 @@ CREATE TABLE IF NOT EXISTS pages (
 --   screen — экран, в который входит слой: самый внешний кадр под страницей
 --   anchor — ближайший слой, на который открывается ссылка Figma (у слоёв внутри
 --            инстанса id составной, и ссылка на них не работает — ведём на инстанс)
+--   ovr   — у инстанса есть переопределения относительно мастер-компонента
+--   tnorm, nnorm — текст и название в нижнем регистре, «ё» как «е»: по ним идёт поиск
 CREATE TABLE IF NOT EXISTS nodes (
     file_key TEXT, page_id TEXT, id TEXT, parent_id TEXT, type TEXT, name TEXT,
     hid INTEGER, sect INTEGER, pinst TEXT, comp TEXT, text TEXT,
     x INTEGER, y INTEGER, w INTEGER, h INTEGER,
     font INTEGER, tstyle INTEGER, first_seen TEXT, screen TEXT, anchor TEXT,
+    ovr INTEGER, tnorm TEXT, nnorm TEXT,
     PRIMARY KEY (file_key, id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS nodes_page ON nodes (file_key, page_id);
@@ -81,6 +86,14 @@ CREATE INDEX IF NOT EXISTS paints_page ON paints (file_key, page_id);
 CREATE INDEX IF NOT EXISTS paints_node ON paints (file_key, node_id);
 CREATE INDEX IF NOT EXISTS paints_color ON paints (color);
 
+-- Компоненты, на которые ссылаются инстансы файла: имя, набор вариантов, библиотека или свой.
+--   remote — 1: из библиотеки, 0: заведён в этом файле
+CREATE TABLE IF NOT EXISTS components (
+    file_key TEXT, id TEXT, key TEXT, name TEXT, set_id TEXT, set_name TEXT, remote INTEGER,
+    PRIMARY KEY (file_key, id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS nodes_comp ON nodes (file_key, comp);
+
 -- Итоговые числа после каждого обновления: из них стрелки «стало лучше или хуже».
 CREATE TABLE IF NOT EXISTS snapshots (
     taken_at TEXT, file_key TEXT, metrics TEXT,
@@ -90,7 +103,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 
 # Колонки, добавленные после первого формата: в старой базе их дописываем, а сами данные
 # обновятся при следующей загрузке — формат поднят, и файлы перезагрузятся.
-_ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"))}
+_ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"), ("ovr", "INTEGER"), ("tnorm", "TEXT"), ("nnorm", "TEXT"))}
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -102,6 +115,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
     con.execute("PRAGMA cache_size=-64000")
+    # Встроенная lower() в SQLite не опускает регистр кириллицы: «Кнопка» и «кнопка» для неё
+    # разные строки. Своя функция — та же, что строит поисковые колонки при загрузке.
+    con.create_function("norm", 1, norm, deterministic=True)
     con.executescript(SCHEMA)
     for table, cols in _ADDED.items():
         have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}

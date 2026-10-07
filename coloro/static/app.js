@@ -168,6 +168,12 @@ async function viewOverview(el, params, stale) {
       ${o.tokens ? task("unbound", "Не привязаны", t.unbound, "значение токена, набрано вручную") : ""}
       ${task("all", "Все цвета", t.colours, `${fmt(t.uses)} ${plural(t.uses, "применение", "применения", "применений")}`)}
     </div>
+    <div class="tasks finds">
+      <a class="task" href="#/search?mode=text"><b>Найти текст</b><span>слово или фраза в любой форме</span></a>
+      <a class="task" href="#/search?mode=size"><b>Найти размер</b><span>например 56 × 56 с допуском</span></a>
+      <a class="task" href="#/search?mode=colour"><b>Найти цвет</b><span>и похожие на него оттенки</span></a>
+      <a class="task" href="#/components"><b>Компоненты</b><span>где стоят, какие варианты, что отвязано</span></a>
+    </div>
     <div class="tiles">
       <div class="tile"><div class="t">Цвета из системы</div><div class="v">${pct(t.bound_pct)}</div><div class="d">${tr ? delta("bound_pct", tr.bound_pct) : "применений через токен или стиль"}</div></div>
       <div class="tile"><div class="t">Левых цветов</div><div class="v">${o.tokens ? fmt(t.stray) : "—"}</div><div class="d">${tr ? delta("stray", tr.stray) : o.tokens ? `почти ${fmt(t.near)} · прозрачность ${fmt(t.alpha)} · мимо ${fmt(t.off)}` : "нужен справочник токенов"}</div></div>
@@ -348,6 +354,177 @@ async function togglePlaces(row, item, offset = 0) {
   } catch (e) { box.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 }
 
+/* ───────────────────── экраны → слои (общее для поиска и компонентов) ───────────────────── */
+
+function layerLine(p) {
+  const inside = p.exact_link ? "" : ' title="Слой внутри компонента: ссылка откроет сам инстанс"';
+  const sect = p.sections ? `<span class="label">${esc(p.sections)} ›</span> ` : "";
+  const what = p.type === "TEXT" && p.text ? `«${esc(p.text)}»` : esc(p.type.toLowerCase());
+  const marks = [p.size, p.overridden ? "изменён" : "", p.hidden ? "скрыт" : ""].filter(Boolean).map(esc).join(" · ");
+  return `<div class="place"><div class="path">${sect}<code>${esc(p.name)}</code>
+    <span class="when">${what}${marks ? " · " + marks : ""}</span></div>
+    <a href="${esc(p.link)}" target="_blank" rel="noopener"${inside}>Открыть ↗</a></div>`;
+}
+
+async function screensBlock(box, groupsUrl, layersUrl, emptyHint, offset = 0) {
+  if (!offset) box.innerHTML = '<div class="loading">Ищем…</div>';
+  let d;
+  try { d = await api(groupsUrl(offset)); }
+  catch (e) { box.innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+  if (!offset) {
+    box.innerHTML = d.total
+      ? `<div class="places-head">${fmt(d.total_places)} ${plural(d.total_places, "место", "места", "мест")} на ${fmt(d.total)} ${plural(d.total, "экране", "экранах", "экранах")}</div>`
+      : `<div class="empty"><b>Ничего не нашлось</b><p>${emptyHint || "Попробуйте другой запрос или ослабьте фильтры."}</p></div>`;
+  } else {
+    const m = box.querySelector(".more-places");
+    if (m) m.remove();
+  }
+  const start = box.querySelectorAll(".scr").length;
+  box.insertAdjacentHTML("beforeend", d.items.map((g, n) => {
+    const layers = g.layers.map(esc).join(", ") + (g.more_layers ? ` и ещё ${g.more_layers}` : "");
+    return `<div class="scr" data-n="${start + n}">
+      <div class="path">${esc(g.file)}<span class="label">›</span>${esc(g.page)}<span class="label">›</span><b>${esc(g.screen)}</b></div>
+      <div class="cnt">${fmt(g.count)} ${plural(g.count, "место", "места", "мест")} · ${layers}</div>
+      <a href="${esc(g.link)}" target="_blank" rel="noopener">Экран ↗</a></div>`;
+  }).join(""));
+  box._groups = (box._groups || []).slice(0, start).concat(d.items);
+  box.querySelectorAll(".scr").forEach((h) => {
+    if (h.dataset.bound) return;
+    h.dataset.bound = "1";
+    const g = box._groups[+h.dataset.n];
+    h.onclick = async (e) => {
+      if (e.target.closest("a")) return;
+      const next = h.nextElementSibling;
+      if (next && next.classList.contains("layers")) { next.remove(); h.classList.remove("open"); return; }
+      h.classList.add("open");
+      const lb = document.createElement("div");
+      lb.className = "layers";
+      lb.innerHTML = '<div class="loading">Ищем слои…</div>';
+      h.after(lb);
+      try {
+        const r = await api(layersUrl(g));
+        lb.innerHTML = r.items.map(layerLine).join("") + (r.total > r.items.length ? `<div class="muted" style="padding:5px 0">и ещё ${fmt(r.total - r.items.length)}</div>` : "");
+      } catch (err) { lb.innerHTML = `<div class="error">${esc(err.message)}</div>`; }
+    };
+  });
+  const left = d.total - (offset + d.items.length);
+  if (left > 0) {
+    box.insertAdjacentHTML("beforeend", `<button class="b quiet more-places">Ещё ${fmt(Math.min(d.limit, left))} из ${fmt(left)} ${plural(left, "экрана", "экранов", "экранов")}</button>`);
+    box.querySelector(".more-places").onclick = () => screensBlock(box, groupsUrl, layersUrl, emptyHint, offset + d.items.length);
+  }
+}
+
+/* ───────────────────── поиск ───────────────────── */
+
+const MODES = [{ k: "text", t: "Текст и названия" }, { k: "size", t: "Размер" }, { k: "colour", t: "Цвет" }];
+
+async function viewSearch(el, params) {
+  renderFilters(true);
+  const mode = MODES.some((m) => m.k === params.get("mode")) ? params.get("mode") : "text";
+  const v = (k, d = "") => esc(params.get(k) || d);
+  const forms = {
+    text: `<input type="text" name="q" value="${v("q")}" placeholder="Слово или фраза — в любой форме и любом порядке" autofocus>
+      <select name="where"><option value="both">в текстах и названиях слоёв</option><option value="text" ${params.get("where") === "text" ? "selected" : ""}>только в текстах</option><option value="name" ${params.get("where") === "name" ? "selected" : ""}>только в названиях</option></select>`,
+    size: `<input type="text" name="w" value="${v("w")}" placeholder="Ширина" style="max-width:96px" inputmode="decimal">
+      <span class="muted">×</span>
+      <input type="text" name="h" value="${v("h")}" placeholder="Высота" style="max-width:96px" inputmode="decimal">
+      <span class="muted">±</span>
+      <input type="text" name="tol" value="${v("tol", "0")}" style="max-width:64px" inputmode="decimal" title="Допуск в пикселях">
+      <select name="type"><option value="">любые слои</option><option value="instance" ${params.get("type") === "instance" ? "selected" : ""}>только инстансы</option><option value="frame" ${params.get("type") === "frame" ? "selected" : ""}>кадры и группы</option><option value="text" ${params.get("type") === "text" ? "selected" : ""}>тексты</option></select>`,
+    colour: `<input type="color" id="pick" value="#${(params.get("hex") || "#FF006F").replace("#", "").slice(0, 6)}" style="width:40px;height:32px;padding:2px;border:none;background:none">
+      <input type="text" name="hex" value="${v("hex", "#FF006F")}" placeholder="#RRGGBB" style="max-width:120px">
+      <span class="label">похожие с разницей до</span>
+      <input type="range" name="tol" min="0" max="10" step="0.5" value="${v("tol", "3")}" id="tolr" style="width:120px">
+      <span id="tolv" class="label">${v("tol", "3")}</span>`,
+  };
+  el.innerHTML = `
+    <div class="cats">${MODES.map((m) => `<button class="${m.k === mode ? "on" : ""}" data-mode="${m.k}">${m.t}</button>`).join("")}</div>
+    <form class="row" id="sf" style="margin-bottom:14px">${forms[mode]}<button class="b main">Найти</button></form>
+    <div id="sres"></div>`;
+  el.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = () => (location.hash = `#/search?mode=${b.dataset.mode}`)));
+  const f = $("#sf");
+  if (mode === "colour") {
+    const pick = $("#pick"), hex = f.elements.hex, tolr = $("#tolr");
+    pick.oninput = () => (hex.value = pick.value.toUpperCase());
+    hex.oninput = () => { if (/^#?[0-9a-f]{6}$/i.test(hex.value)) pick.value = "#" + hex.value.replace("#", ""); };
+    tolr.oninput = () => ($("#tolv").textContent = tolr.value);
+  }
+  f.onsubmit = (e) => {
+    e.preventDefault();
+    const q = new URLSearchParams({ mode });
+    for (const inp of f.elements) if (inp.name && inp.value) q.set(inp.name, inp.value.trim());
+    location.hash = "#/search?" + q.toString();
+  };
+  const res = $("#sres");
+  const p = Object.fromEntries(params);
+  delete p.mode;
+  if (mode === "text" && !p.q) { res.innerHTML = '<p class="hint">Найдёт «Купить 100 монет» по запросу «купите монеты»: слова — в любом порядке и любой форме. Ищет и по тексту, и по названию слоя.</p>'; return; }
+  if (mode === "size" && !p.w && !p.h) { res.innerHTML = '<p class="hint">Например, 56 × 56 — все иконки и аватарки такого размера. Можно задать только ширину или только высоту.</p>'; return; }
+  if (mode === "colour" && !params.get("hex")) { res.innerHTML = '<p class="hint">Найдёт цвет и похожие на него. Разница до 1 — глазом не отличить, до 3 — заметно только при сравнении.</p>'; return; }
+  if (mode === "colour") {
+    try {
+      const d = await api("/api/search" + fq({ kind: "colour", hex: p.hex, tol: p.tol || 3 }));
+      if (!d.items.length) { res.innerHTML = '<div class="empty"><b>Таких цветов нет</b><p>Увеличьте допуск или проверьте фильтры.</p></div>'; return; }
+      res.innerHTML = `<div class="places-head">${fmt(d.items.length)} ${plural(d.items.length, "цвет", "цвета", "цветов")} — от самого близкого</div><div class="colours" id="clist"></div>`;
+      colourState = { items: d.items.map((i) => ({ ...i, family: `разница ${String(i.de).replace(".", ",")} · ${i.family}` })), shown: 120 };
+      drawColours();
+    } catch (e) { res.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+    return;
+  }
+  const base = { kind: mode, ...p };
+  screensBlock(res,
+    (offset) => "/api/search" + fq({ ...base, offset }),
+    (g) => "/api/search" + fq({ ...base, file_key: g.file_key, screen: g.screen_id || "" }),
+    mode === "text" ? "Проверьте написание или поищите по одному слову." : "Увеличьте допуск или уберите ограничение по типу слоя.");
+}
+
+/* ───────────────────── компоненты ───────────────────── */
+
+async function viewComponents(el, params, stale) {
+  renderFilters(true);
+  const q = params.get("q") || "";
+  const [c, det] = await Promise.all([api("/api/components" + fq({ q })), api("/api/detached" + fq())]);
+  if (stale()) return;
+  const inst = c.items.reduce((n, g) => n + g.instances, 0);
+  el.innerHTML = `
+    <form class="row" id="cf" style="margin-bottom:14px"><input type="text" name="q" value="${esc(q)}" placeholder="Название компонента или набора"><button class="b main">Найти</button></form>
+    <h2>Компоненты в макетах</h2>
+    <p class="sub">${fmt(c.total)} ${plural(c.total, "набор или компонент", "набора или компонента", "наборов и компонентов")} · ${fmt(inst)} ${plural(inst, "инстанс", "инстанса", "инстансов")}. Нажмите, чтобы увидеть варианты и где они стоят.</p>
+    <div id="klist">${c.items.length ? "" : '<div class="empty"><b>Ничего не нашлось</b><p>Под текущими фильтрами инстансов таких компонентов нет.</p></div>'}</div>
+    <h2>Похоже на отвязанные копии${det.total ? ` <span class="muted">${det.capped ? fmt(det.total) + " и больше" : fmt(det.total)}</span>` : ""}</h2>
+    <p class="sub">Кадры и группы, названные как компонент файла, но не являющиеся инстансом. Когда инстанс отвязывают, кадр сохраняет имя компонента. Это подсказка, а не приговор: так же может называться и обычный кадр.</p>
+    <div id="dlist">${det.items.length ? det.items.map((d) => `<div class="place"><div class="path">${esc(d.file)}<span class="label">›</span>${esc(d.page)}<span class="label">›</span>${esc(d.screen)}<span class="label">›</span><code>${esc(d.name)}</code></div><a href="${esc(d.link)}" target="_blank" rel="noopener">Открыть ↗</a></div>`).join("") : '<p class="muted">Не нашлось.</p>'}</div>`;
+  $("#cf").onsubmit = (e) => { e.preventDefault(); const v = e.target.elements.q.value.trim(); location.hash = "#/components" + (v ? "?q=" + encodeURIComponent(v) : ""); };
+  $("#klist").insertAdjacentHTML("beforeend", c.items.map((g, n) => `
+    <div class="krow" data-n="${n}">
+      <div class="name">${esc(g.title)} <span class="tag ${g.remote ? "token" : "near"}">${g.remote ? "библиотека" : "свой"}</span>
+        <small>${Object.keys(g.variants).length ? Object.entries(g.variants).map(([k, vs]) => `${esc(k)}: ${Object.keys(vs).length}`).join(" · ") : "без вариантов"}</small></div>
+      <div class="num">${fmt(g.instances)} <span class="muted">${plural(g.instances, "инстанс", "инстанса", "инстансов")}</span></div>
+      <div class="num c-screens">${fmt(g.screens)} <span class="muted">${plural(g.screens, "экран", "экрана", "экранов")}</span></div>
+      <div class="num c-files">${fmt(g.files)} <span class="muted">${plural(g.files, "файл", "файла", "файлов")}</span></div>
+      <div class="num">${g.overridden ? `${pct(g.overridden * 100 / g.instances)} <span class="muted">изменено</span>` : '<span class="muted">не менялся</span>'}</div>
+    </div>`).join(""));
+  el.querySelectorAll(".krow").forEach((r) => (r.onclick = () => openComponent(r, c.items[+r.dataset.n])));
+}
+
+function openComponent(row, g, variant = "") {
+  let box = row.nextElementSibling;
+  if (!variant && box && box.classList.contains("kbox")) { box.remove(); row.classList.remove("open"); return; }
+  row.classList.add("open");
+  if (!box || !box.classList.contains("kbox")) { box = document.createElement("div"); box.className = "kbox places"; row.after(box); }
+  const facets = Object.entries(g.variants).map(([k, vs]) => `<div class="facet"><span class="label">${esc(k)}</span>
+    ${Object.entries(vs).sort((a, b) => b[1] - a[1]).map(([val, n]) => {
+      const key = `${k}=${val}`;
+      return `<button class="chip ${variant === key ? "on" : ""}" data-v="${esc(key)}">${esc(val)} <span class="muted">${fmt(n)}</span></button>`;
+    }).join("")}</div>`).join("");
+  box.innerHTML = `${facets ? `<div class="facets">${facets}</div>` : ""}<div class="kres"></div>`;
+  box.querySelectorAll("[data-v]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openComponent(row, g, variant === b.dataset.v ? "" : b.dataset.v); }));
+  const base = { kind: "component", ...(g.set ? { set: g.set } : { cname: g.cname }), ...(variant ? { variant } : {}) };
+  screensBlock(box.querySelector(".kres"),
+    (offset) => "/api/search" + fq({ ...base, offset }),
+    (gr) => "/api/search" + fq({ ...base, file_key: gr.file_key, screen: gr.screen_id || "" }));
+}
+
 /* ───────────────────── источники ───────────────────── */
 
 async function viewSources(el, params, stale) {
@@ -441,7 +618,7 @@ async function viewSettings(el, params, stale) {
 
 /* ───────────────────── маршруты ───────────────────── */
 
-const VIEWS = { "": viewOverview, colours: viewColours, sources: viewSources, settings: viewSettings };
+const VIEWS = { "": viewOverview, colours: viewColours, search: viewSearch, components: viewComponents, sources: viewSources, settings: viewSettings };
 // Номер текущего перехода. Медленный ответ предыдущего экрана не должен затереть уже
 // открытый следующий: общая картина считается дольше, чем открываются цвета.
 let routeSeq = 0;
@@ -451,6 +628,9 @@ async function route() {
   const name = VIEWS[path] ? path : "";
   document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("on", a.dataset.v === (name || "overview")));
   const el = $("#view");
+  // Сразу показываем, что экран сменился: иначе медленный экран выглядит как несработавший клик.
+  if (el.dataset.view !== (name || "overview")) el.innerHTML = '<div class="loading">Загрузка…</div>';
+  el.dataset.view = name || "overview";
   try { await VIEWS[name](el, new URLSearchParams(query || ""), () => seq !== routeSeq); }
   catch (e) { if (seq === routeSeq) el.innerHTML = `<div class="error">Не получилось загрузить данные: ${esc(e.message)}</div>`; }
 }

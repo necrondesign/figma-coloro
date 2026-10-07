@@ -23,9 +23,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import db as dbm
-from . import health, inventory, rules, tokens
+from . import health, inventory, rules, search, tokens
 from .filters import Filter
 from .load import update_all
+from .textnorm import norm
 
 HOME = Path.home() / ".coloro"
 DB_PATH = HOME / "coloro.sqlite"
@@ -152,7 +153,7 @@ def remove_source(con, sid: int) -> None:
         con.execute("DELETE FROM sources WHERE id = ?", (sid,))
         # Данные файла уходят, только если на него больше не ведёт ни одна ссылка.
         if not con.execute("SELECT 1 FROM sources WHERE file_key = ?", row).fetchone():
-            for table in ("nodes", "paints", "pages", "files", "snapshots"):
+            for table in ("nodes", "paints", "pages", "files", "snapshots", "components"):
                 con.execute(f"DELETE FROM {table} WHERE file_key = ?", row)
 
 
@@ -232,6 +233,24 @@ class Handler(BaseHTTPRequestHandler):
                     fk = (q.get("file_key") or [None])[0]
                     sc = (q.get("screen") or [None])[0]
                     return self._json(inventory.places(con, filt, c, a, offset=off, file_key=fk, screen=sc))
+                if u.path == "/api/search":
+                    flat = {k: v[0] for k, v in q.items()}
+                    kind = flat.get("kind", "text")
+                    if kind == "colour":
+                        items = inventory.colours(con, filt, idx)
+                        return self._json({"items": search.colour_matches(items, flat.get("hex", ""), float(flat.get("tol") or 3))})
+                    cond, args, info = search.condition(kind, flat, con)
+                    if flat.get("file_key"):
+                        return self._json(search.layers(con, filt, cond, args, flat["file_key"], flat.get("screen") or None))
+                    phrase = norm(flat.get("q", "")) if kind == "text" else None
+                    res = search.screens(con, filt, cond, args, offset=int(flat.get("offset") or 0), rank_phrase=phrase,
+                                         label="COALESCE(n.text, n.name)" if kind == "text" else "n.name")
+                    res.update(info)
+                    return self._json(res)
+                if u.path == "/api/components":
+                    return self._json(search.components(con, filt, (q.get("q") or [""])[0]))
+                if u.path == "/api/detached":
+                    return self._json(search.detached(con, filt))
                 return self._error("нет такого адреса", 404)
             except ValueError as e:
                 return self._error(str(e))

@@ -112,12 +112,12 @@ def screens(con, filt: Filter, c: str, a: int, limit: int = 60, offset: int = 0)
     total = con.execute("SELECT COUNT(*) FROM (SELECT 1" + base + " GROUP BY n.file_key, n.screen)", params).fetchone()[0]
     rows = con.execute(
         "SELECT n.file_key, f.name, pg.name, s.name, n.screen, COUNT(*), MIN(n.first_seen),"
-        " GROUP_CONCAT(DISTINCT n.name), SUM(p.src IS NULL), SUM(n.hid), MAX(pg.archived)" + base +
+        " GROUP_CONCAT(DISTINCT replace(n.name, ',', char(31))), SUM(p.src IS NULL), SUM(n.hid), MAX(pg.archived)" + base +
         " GROUP BY n.file_key, n.screen ORDER BY f.name, MIN(pg.position), s.name LIMIT ? OFFSET ?",
         params + [limit, offset]).fetchall()
     groups = []
     for fk, fname, pname, sname, screen, count, first, names, raw, hid, archived in rows:
-        layer_names = sorted(set((names or "").split(",")))
+        layer_names = sorted({x.replace(chr(31), ",") for x in (names or "").split(",") if x})
         groups.append({
             "file_key": fk, "file": fname, "page": pname, "screen": sname or "без экрана", "screen_id": screen,
             "count": count, "raw": raw, "first_seen": first, "layers": layer_names[:4],

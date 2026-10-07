@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .textnorm import norm
+
 
 # Что считается экраном: самый внешний кадр под страницей. Секции и группы — это
 # контейнеры, в которых экраны лежат, сами они экранами не считаются.
@@ -41,6 +43,7 @@ class Ctx:
 class Out:
     nodes: list[tuple] = field(default_factory=list)
     paints: list[tuple] = field(default_factory=list)
+    components: dict = field(default_factory=dict)
 
 
 def _hex(c: dict) -> str:
@@ -158,6 +161,9 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
             intern(_style_name(styles, st.get("text"))) if is_text and st.get("text") else None,
             first_seen.get(nid) or now,
             screen, anchor,
+            (1 if node.get("overrides") else 0) if ntype == "INSTANCE" else None,
+            norm(node.get("characters")) if is_text else None,
+            norm(name),
         ))
         for p in paints_of(node, styles, intern):
             out.paints.append((ctx.file_key, ctx.page_id, nid, *p))
