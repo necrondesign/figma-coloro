@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, urlparse
 from . import db as dbm
 from . import effects, health, inspect, inventory, memo, report, rules, scales, search, tokens, typography
 from .figma import Figma, FigmaError
-from .filters import Filter
+from .filters import NODE_JOIN, Filter
 from .load import update_all
 from .textnorm import norm
 
@@ -423,6 +423,15 @@ class Handler(BaseHTTPRequestHandler):
                                "counts": {k: len(v) for k, v in st.items()}})
         if path == "/api/gradients":
             return self._json({"items": remember("gradients", lambda: inventory.gradients(con, filt))})
+        if path == "/api/tokens/catalog":
+            items = remember("colours", lambda: inventory.colours(con, filt, idx))
+            def number_uses():
+                where, args = filt.where()
+                return {(k, v): n for k, v, n in con.execute(
+                    "SELECT p.kind, p.value, COUNT(*) FROM props p JOIN nodes n ON n.file_key = p.file_key AND n.id = p.node_id"
+                    + NODE_JOIN + f" WHERE {where} AND {scales.MANUAL} GROUP BY p.kind, p.value", args)}
+            props = remember("number-uses", number_uses)
+            return self._json(tokens.catalog(con, filt.project, idx, items, props))
         if path == "/api/tokens/usage":
             items = remember("colours", lambda: inventory.colours(con, filt, idx))
             return self._json({"items": tokens.usage(idx, items), "library": idx.source,
@@ -555,9 +564,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if path == "/api/tokens":
             pid = _project(con, body.get("project"))
-            rows = tokens.parse(body.get("text", ""), body.get("filename", ""))
+            rows = tokens.parse_all(body.get("text", ""), body.get("filename", ""))
             n = tokens.store(con, rows, body.get("filename") or "tokens", pid)
-            return self._json({"count": n, "names": len({r[0] for r in rows})})
+            return self._json({"count": n, "names": len({r["name"] for r in rows}),
+                               "colors": len({r["name"] for r in rows if r["color"]})})
         if path == "/api/figma-token":
             save_token(body.get("token", ""))
             return self._json({"ok": True})

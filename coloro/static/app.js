@@ -70,7 +70,7 @@ const DEFAULT_F = { hidden: false, archive: false, instances: true, pages: "", s
 const DEFAULT_SHOW = {
   colors: { view: "colors", cat: "off", usage: "all", family: "", sort: "uses", q: "", rare: 2 },
   gradients: { sort: "uses", q: "" },
-  tokens: { cat: "all", q: "" },
+  tokens: { cat: "all", q: "", type: "all", coll: "", group: "" },
   typography: { cat: "unbound" },
   spacing: { group: "spacing", cat: "near" },
   effects: { cat: "unbound" },
@@ -406,6 +406,7 @@ async function pollJob() {
 
 const TYPES = [
   { k: "colors", t: "Colors", lv: "stray", icon: "M8 2.5a5.5 5.5 0 1 0 0 11c1 0 1.2-.8.8-1.5-.5-.8 0-1.8 1-1.8h1.4a2.3 2.3 0 0 0 2.3-2.3C13.5 4.8 11 2.5 8 2.5Z" },
+  { k: "tokens", t: "Tokens", icon: "M5 3.5H4a1 1 0 0 0-1 1V7l-1 1 1 1v2.5a1 1 0 0 0 1 1h1M11 3.5h1a1 1 0 0 1 1 1V7l1 1-1 1v2.5a1 1 0 0 1-1 1h-1" },
   { k: "typography", t: "Typography", lv: "text_nostyle_pct", icon: "M3 4h10M8 4v9M5.5 13h5" },
   { k: "text", t: "Text", icon: "M2.5 4h11M2.5 7h11M2.5 10h7M2.5 13h9" },
   { k: "spacing", t: "Spacing & radius", lv: "scale_off_pct", icon: "M3 3v10M13 3v10M6 8h4" },
@@ -894,7 +895,7 @@ function colourWhat(i) {
 const colorViews = () => {
   const themes = projectThemes();
   const theme = themes.includes(S.themes[S.project]) ? S.themes[S.project] : "";
-  return seg([["colors", "Colors"], ["gradients", "Gradients"], ["tokens", "Tokens"]], S.show.colors.view, "cview")
+  return seg([["colors", "Colors"], ["gradients", "Gradients"]], S.show.colors.view, "cview")
     + (themes.length > 1 ? `<div class="field" style="margin-top:8px"><span class="label">Compare with theme</span>${select("theme", [["", "All themes"], ...themes.map((m) => [m, modeName(m)])], theme)}</div>` : "");
 };
 function bindColorViews(root) {
@@ -906,7 +907,7 @@ function bindColorViews(root) {
 async function viewColors(el, stale) {
   const sh = S.show.colors;
   if (sh.view === "gradients") return viewGradients(el, stale);
-  if (sh.view === "tokens") return viewTokens(el, stale);
+  if (sh.view === "tokens") sh.view = "colors";
   const d = await api("/api/colours" + fq());
   if (stale()) return;
   if (!d.tokens && ["near", "alpha", "off", "unbound"].includes(sh.cat)) sh.cat = "all";
@@ -1008,60 +1009,138 @@ async function viewGradients(el, stale) {
   searchPlaces((g) => ({ kind: "gradient", grad: g.id })));
 }
 
-async function viewTokens(el, stale) {
+/* ───────────────────── tokens ───────────────────── */
+
+/* Таблица переменных — как в Figma и Tokens Studio: коллекции вкладками, слева группы по
+   пути в имени, колонки — темы. Справа от значений — сколько раз оно встречается в макетах. */
+const TOKEN_TYPES = [["all", "All"], ["color", "Color"], ["number", "Number"], ["string", "String"], ["typography", "Typography"], ["shadow", "Shadow"], ["boolean", "Boolean"], ["other", "Other"]];
+const TYPE_ICON = {
+  number: '<span class="tico">#</span>', string: '<span class="tico">T</span>', boolean: '<span class="tico">◐</span>',
+  typography: '<span class="tico">Aa</span>', shadow: '<span class="tico">▣</span>', other: '<span class="tico">·</span>',
+};
+
+async function viewTokensPage(el, stale) {
   const sh = S.show.tokens;
-  const d = await api("/api/tokens/usage" + fq());
+  const d = await api("/api/tokens/catalog" + fq());
   if (stale()) return;
   if (!d.items.length) {
-    drawShow(colorViews(), bindColorViews);
-    el.innerHTML = `<div class="empty"><b>No token library</b>Load the project’s token library to compare it with the files.<br><button class="b main" id="tTok">Open settings</button></div>`;
+    el.innerHTML = `<div class="empty"><b>No tokens</b>Load the project’s token library, or use styles and variables in the files.<br><button class="b main" id="tTok">Open settings</button></div>`;
     $("#tTok").onclick = openSettings;
     return;
   }
+  const collName = (t) => t.collection + (t.library ? ` · ${t.library}` : "");
+  const colls = [...new Set(d.items.map(collName))];
+  if (!colls.includes(sh.coll)) sh.coll = colls[0];
+  const inColl = d.items.filter((t) => collName(t) === sh.coll);
   const q = (sh.q || "").toLowerCase().replace("#", "");
-  const base = d.items.filter((t) => !q || t.name.toLowerCase().includes(q) || t.values.some((v) => v.color.toLowerCase().includes(q)));
-  const themes = d.themes || [];
-  const cats = [["all", "All"], ["used", "Used"], ["unused", "Unused"], ...(themes.length > 1 ? [["themed", "Change with theme"], ["constant", "Same in all themes"]] : [])];
-  const inT = (t, k) => k === "all" || (k === "used" ? t.uses > 0 : k === "unused" ? t.uses === 0 : k === "themed" ? !t.constant : t.constant);
-  const items = base.filter((t) => inT(t, sh.cat));
-  $("#tname").innerHTML = `Colors<span>${pl(d.items.length, "token")}</span>`;
-  drawShow(`${colorViews()}<div class="sec">Usage</div>${chips(cats.map(([k, t]) => [k, t, base.filter((x) => inT(x, k)).length]), sh.cat)}
-    <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Token name or hex"></div>`,
-  (root) => { bindShow(root, "tokens", () => route()); bindColorViews(root); });
-  el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens${d.theme ? " · " + esc(modeName(d.theme)) : ""}</h1><p class="sub">${themes.length > 1 ? `${pl(themes.length, "theme")}: ${themes.map((m) => esc(modeName(m))).join(", ")}. Each row is a variable with its value in every theme. ` : ""}${d.library === "files"
+  const kind = (t) => (TOKEN_TYPES.some(([k]) => k === t.type) ? t.type : "other");
+  const usage = (t, k) => k === "all" || (k === "used" ? t.uses > 0 : k === "unused" ? !t.uses && !t.empty : k === "themed" ? !t.constant : k === "byhand" ? t.raw > 0 : t.empty);
+  const base = inColl.filter((t) => (sh.type === "all" || kind(t) === sh.type) && usage(t, sh.cat)
+    && (!q || t.name.toLowerCase().includes(q) || t.values.some((v) => String(v.value).toLowerCase().includes(q))));
+  const groupOf = (t) => t.name.includes("/") ? t.name.slice(0, t.name.lastIndexOf("/")) : "";
+  const items = base.filter((t) => !sh.group || groupOf(t) === sh.group || groupOf(t).startsWith(sh.group + "/"));
+  // Как в Figma: по группам и имени. «Most used» — без заголовков групп, просто по частоте.
+  const byName = (sh.sort || "name") === "name";
+  const cmp = (x, y) => x.localeCompare(y, undefined, { numeric: true });
+  items.sort(byName ? (a, b) => cmp(groupOf(a), groupOf(b)) || cmp(a.name, b.name) : (a, b) => b.uses - a.uses || a.name.localeCompare(b.name));
+  // Темы — те, у которых в коллекции есть значения.
+  const modes = d.themes.filter((m) => inColl.some((t) => t.values.some((v) => v.mode === m)));
+  const cols = modes.length ? modes : [""];
+
+  $("#tname").innerHTML = `Tokens<span>${pl(new Set(d.items.map((t) => t.name)).size, "variable")}</span>`;
+  const typeCounts = TOKEN_TYPES.map(([k, t]) => [k, t, inColl.filter((x) => k === "all" || kind(x) === k).length]).filter(([k, , n]) => k === "all" || n);
+  const cats = [["all", "All"], ["used", "Used in files"], ["unused", "Unused"], ["byhand", "Set by hand"], ...(modes.length > 1 ? [["themed", "Change with theme"]] : []), ["empty", "No value"]];
+  drawShow(`<div class="sec">Type</div>${chips(typeCounts, sh.type, "ttype")}
+    <div class="sec">Usage</div>${chips(cats.map(([k, t]) => [k, t, inColl.filter((x) => (sh.type === "all" || kind(x) === sh.type) && usage(x, k)).length]), sh.cat)}
+    <div class="field" style="margin-top:6px"><span class="label">Sort by</span>${select("sort", [["name", "Group and name"], ["uses", "Most used in files"]], sh.sort || "name")}</div>
+    <div class="field"><span class="label">Find</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Name or value"></div>`,
+  (root) => {
+    bindShow(root, "tokens", () => route());
+    root.querySelectorAll("[data-ttype]").forEach((b) => (b.onclick = () => { sh.type = b.dataset.ttype; save(); route(); }));
+  });
+
+  // Дерево групп: «Colors/Fonts/T1» → Colors › Fonts.
+  const tree = {};
+  for (const t of base) {
+    const parts = groupOf(t).split("/").filter(Boolean);
+    let path = "";
+    for (const p of parts) { path = path ? path + "/" + p : p; tree[path] = (tree[path] || 0) + 1; }
+  }
+  const groups = Object.keys(tree).sort();
+  const cell = (t, v) => {
+    if (!v) return '<span class="muted">—</span>';
+    if (v.color) return `<span class="tcell"><span class="sw2" style="background:#${v.color};opacity:${v.alpha / 100}"></span><span class="mono">${esc(v.color)}</span>${v.alpha < 100 ? `<span class="muted">${v.alpha}%</span>` : ""}</span>`;
+    return `<span class="tcell mono" title="${esc(v.value)}">${esc(String(v.value).slice(0, 60))}${v.from_name ? ' <span class="muted">from name</span>' : ""}</span>`;
+  };
+  const valueIn = (t, m) => t.constant ? t.values[0] : t.values.find((v) => v.mode === m);
+  const status = (t) => t.empty ? '<span class="tag plain">No value in the file</span>'
+    : !t.uses ? (t.type === "color" || (t.type === "number" && t.kinds && t.kinds.length) ? '<span class="tag off">Unused</span>' : '<span class="muted">—</span>')
+    : t.raw ? `<span class="tag unbound">Set by hand ${num(t.raw)}</span>` : '<span class="tag token">Used</span>';
+  let lastGroup = null;
+  const rows = items.map((t, n) => {
+    const g = groupOf(t);
+    const head = byName && g !== lastGroup ? `<tr class="tgroup"><td colspan="${cols.length + 3}">${esc(g || "No group")}</td></tr>` : "";
+    lastGroup = g;
+    const icon = t.type === "color" ? `<span class="sw2" style="background:#${(t.values[0] || {}).color || "transparent"}"></span>` : TYPE_ICON[kind(t)] || TYPE_ICON.other;
+    return `${head}<tr class="trow" data-n="${n}"><td class="tname">${icon}<span title="${esc(t.name)}">${esc(byName ? t.name.slice(g ? g.length + 1 : 0) : t.name)}</span>${t.scope && t.scope !== "ALL_SCOPES" ? `<span class="muted tscope">${esc(t.scope.toLowerCase().replace(/_/g, " "))}</span>` : ""}</td>
+      ${cols.map((m) => `<td>${cell(t, valueIn(t, m))}</td>`).join("")}
+      <td class="num">${t.uses ? num(t.uses) : '<span class="muted">0</span>'}</td><td>${status(t)}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens</h1><p class="sub">${d.library === "files"
       ? "No token library is loaded, so this is the system taken from the files: every color used through a style or a variable. Style names are shown; variable names need a token library."
-      : "The token library against the files. Uses count every color equal to the token value: Figma reports which variable a color is bound to only on the Enterprise plan. Unused tokens may be obsolete."}</p></div></div><div class="list" id="list"></div>`;
+      : `${pl(inColl.length, "variable")} in this collection${modes.length > 1 ? `, ${pl(modes.length, "mode")}` : ""}. Uses count values equal to the token in the files: Figma reports which variable is bound only on the Enterprise plan.`}</p></div></div>
+    ${colls.length > 1 ? `<div class="seg tcolls">${colls.map((c) => `<button class="${c === sh.coll ? "on" : ""}" data-coll="${esc(c)}">${esc(c || "No collection")}</button>`).join("")}</div>` : ""}
+    <div class="tokwrap">
+      <nav class="tgroups"><button class="${!sh.group ? "on" : ""}" data-grp="">All variables<em>${num(base.length)}</em></button>
+        ${groups.map((g) => `<button class="${sh.group === g ? "on" : ""}" data-grp="${esc(g)}" style="padding-left:${8 + (g.split("/").length - 1) * 12}px">${esc(g.split("/").pop())}<em>${num(tree[g])}</em></button>`).join("")}</nav>
+      <div class="tablew"><table class="vtable">
+        <thead><tr><th>Name</th>${cols.map((m) => `<th>${esc(modeName(m) || "Value")}</th>`).join("")}<th class="num">In files</th><th></th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="${cols.length + 3}" class="muted" style="padding:16px">No tokens match the options.</td></tr>`}</tbody></table></div>
+    </div>`;
+  el.querySelectorAll("[data-coll]").forEach((b) => (b.onclick = () => { sh.coll = b.dataset.coll; sh.group = ""; save(); route(); }));
+  el.querySelectorAll("[data-grp]").forEach((b) => (b.onclick = () => { sh.group = b.dataset.grp; save(); route(); }));
+  el.querySelectorAll(".trow").forEach((r) => (r.onclick = () => {
+    const next = r.nextElementSibling;
+    if (next && next.classList.contains("tplaces")) { next.remove(); r.classList.remove("open"); return; }
+    r.classList.add("open");
+    const t = items[+r.dataset.n];
+    const tr = document.createElement("tr");
+    tr.className = "tplaces";
+    tr.innerHTML = `<td colspan="${cols.length + 3}"><div class="places"></div></td>`;
+    r.after(tr);
+    const box = tr.querySelector(".places");
+    const colorVals = t.values.filter((v) => v.color && v.uses);
+    if (colorVals.length) {
+      const show = (v) => {
+        box.innerHTML = (t.values.length > 1 ? `<div class="vchips" style="margin-left:0">${t.values.map((x, i) => `<button class="chip ${x === v ? "on" : ""}" data-vi="${i}" ${x.uses ? "" : "disabled"}>${esc(modeName(x.mode) || "Value")} · #${esc(x.color)}<em>${num(x.uses)}</em></button>`).join("")}</div>` : "") + '<div class="tres"></div>';
+        box.querySelectorAll("[data-vi]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); show(t.values[+b.dataset.vi]); }));
+        colorPlaces(() => v.color, () => v.alpha)(t, box.querySelector(".tres"));
+      };
+      show(colorVals[0]);
+    } else if (t.type === "number" && t.uses) {
+      const v = t.values[0];
+      const kinds = t.kinds || [];
+      const group = kinds.includes("radius") ? "radius" : kinds.includes("stroke") && kinds.length === 1 ? "stroke" : "spacing";
+      searchPlaces(() => ({ kind: "prop", group, value: String(v.value).replace("px", "") }))(t, box);
+    } else {
+      box.innerHTML = `<p class="muted" style="padding:6px 0">${t.empty ? "The library file has no value for this token, so it cannot be compared with the files." : "This token’s value is not used in the selected files."}</p>`;
+    }
+  }));
   {
-    const unused = d.items.filter((t) => !t.uses), byHand = d.items.filter((t) => t.raw > 0);
+    const colorT = d.items.filter((t) => t.type === "color" && !t.empty), numT = d.items.filter((t) => t.type === "number");
+    const unused = d.items.filter((t) => !t.uses && !t.empty && (t.type === "color" || (t.type === "number" && t.kinds && t.kinds.length)));
+    const byHand = d.items.filter((t) => t.raw > 0), empty = d.items.filter((t) => t.empty);
     summary(el, {
-      tiles: [{ t: "Tokens in the library", v: num(d.items.length) }, { t: "Used", v: num(d.items.length - unused.length) },
-        { t: "Unused", v: num(unused.length) }, { t: "Set by hand somewhere", v: num(byHand.length) }],
+      tiles: [{ t: "Variables", v: num(new Set(d.items.map((t) => t.name)).size), sub: `${pl(colls.length, "collection")}` },
+        { t: "Colors", v: num(colorT.length) }, { t: "Numbers", v: num(numT.length) },
+        { t: "Unused in the files", v: num(unused.length) }],
       recs: [
-        { n: byHand.length, title: `Bind ${pl(byHand.length, "token")} where they are set by hand`, text: "Their values are typed in manually in some places.", go: () => { sh.cat = "used"; save(); route(); } },
-        { n: unused.length, title: `Review ${pl(unused.length, "unused token")}`, text: "No color in the selected files equals these tokens. They may be obsolete, or the files are out of sync with the system.", go: () => { sh.cat = "unused"; save(); route(); } },
+        { n: byHand.length, title: `Bind ${pl(byHand.length, "token")} where they are set by hand`, text: "Their values appear in the files typed in manually.", go: () => { sh.cat = "byhand"; save(); route(); } },
+        { n: unused.length, title: `Review ${pl(unused.length, "unused token")}`, text: "No color or number in the selected files equals these tokens. They may be obsolete, or the files drifted from the system.", go: () => { sh.cat = "unused"; save(); route(); } },
+        { n: empty.length, title: `${pl(empty.length, "token")} without a value in the library file`, text: "The export has names but no values for them, so they cannot be compared. Export the variables with values to include them.", go: () => { sh.cat = "empty"; save(); route(); } },
       ],
     });
   }
-  const valueChip = (v, constant) => `<span class="tval${d.theme && v.mode && v.mode !== d.theme ? " dim" : ""}" title="${esc(modeName(v.mode) || "Value")} · ${pl(v.uses, "use")}">
-      <span class="sw2" style="background:#${v.color};opacity:${v.alpha / 100}"></span><span class="mono">#${esc(v.color)}${v.alpha < 100 ? " " + v.alpha + "%" : ""}</span>${v.mode && !constant ? `<span class="muted">${esc(modeName(v.mode))}</span>` : ""}</span>`;
-  rowsWithPlaces($("#list"), items, (t, n) => {
-    const first = t.values[0];
-    return `<div class="crow trow" data-n="${n}">${t.constant ? swatch(first.color, first.alpha)
-        : `<span class="sample tpair">${t.values.slice(0, 2).map((v) => `<i style="background:#${v.color};opacity:${v.alpha / 100}"></i>`).join("")}</span>`}
-      <div class="name">${esc(t.name)}<small>${t.collection ? esc(t.collection) + " · " : ""}${t.constant ? (themes.length > 1 ? "Same in all themes" : "") : pl(t.values.length, "value")}</small></div>
-      ${counts({ uses: t.uses, screens: t.screens, files: t.files, unit: "use" })}
-      <div class="what tvals">${t.values.map((v) => valueChip(v, t.constant)).join("")}${t.uses ? (t.raw ? ` <span class="tag unbound">Set by hand ${num(t.raw)}</span>` : "") : ' <span class="tag off">Unused</span>'}</div></div>`;
-  },
-  (t, box) => {
-    const used = t.values.filter((v) => v.uses);
-    if (!used.length) { box.innerHTML = '<p class="muted" style="padding:6px 0">No value of this token is used in the selected files.</p>'; return; }
-    const show = (v) => {
-      box.innerHTML = (t.values.length > 1 ? `<div class="vchips" style="margin-left:0">${t.values.map((x, i) => `<button class="chip ${x === v ? "on" : ""}" data-vi="${i}" ${x.uses ? "" : "disabled"}>${esc(modeName(x.mode) || "Value")} · #${esc(x.color)}<em>${num(x.uses)}</em></button>`).join("")}</div>` : "") + '<div class="tres"></div>';
-      box.querySelectorAll("[data-vi]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); show(t.values[+b.dataset.vi]); }));
-      colorPlaces(() => v.color, () => v.alpha)(t, box.querySelector(".tres"));
-    };
-    show(used[0]);
-  });
 }
 
 /* ───────────────────── typography ───────────────────── */
@@ -1760,7 +1839,7 @@ $("#veil").onclick = (e) => { if (e.target.id === "veil") closeDialog(); };
 
 /* ───────────────────── start ───────────────────── */
 
-const VIEWS = { colors: viewColors, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
+const VIEWS = { colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
   images: viewImages, components: viewComponents, search: viewSearch };
 
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });

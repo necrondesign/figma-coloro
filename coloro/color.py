@@ -20,12 +20,17 @@ NEAR_DE = 3.0
 NEAR_ALPHA = 5
 
 _HEX = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+# «#9EA1B6@10%» и «#9EA1B6 10%» — цвет и прозрачность отдельно, так их пишут выгрузки и отчёты.
+_HEX_PCT = re.compile(r"^#?([0-9a-fA-F]{6})\s*(?:@|\s)\s*(\d{1,3}(?:\.\d+)?)\s*%$")
 _RGBA = re.compile(r"^rgba?\(\s*([\d.]+)%?\s*[, ]\s*([\d.]+)%?\s*[, ]\s*([\d.]+)%?\s*(?:[,/]\s*([\d.]+%?)\s*)?\)$", re.I)
 
 
 def parse(value) -> tuple[str, int] | None:
     """«#RRGGBB», «#RGB», «#RRGGBBAA», «rgba(…)» → (RRGGBB, непрозрачность 0–100). Иначе None."""
     s = str(value or "").strip()
+    m = _HEX_PCT.match(s)
+    if m:
+        return m.group(1).upper(), max(0, min(100, round(float(m.group(2)))))
     m = _HEX.match(s)
     if m:
         h = m.group(1)

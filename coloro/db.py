@@ -129,7 +129,8 @@ CREATE INDEX IF NOT EXISTS images_page ON images (file_key, page_id);
 
 -- Справочник токенов цвета: загружается из файла дизайн-системы.
 CREATE TABLE IF NOT EXISTS tokens (
-    name TEXT, color TEXT, alpha INTEGER, mode TEXT, collection TEXT, project_id INTEGER
+    name TEXT, color TEXT, alpha INTEGER, mode TEXT, collection TEXT, project_id INTEGER,
+    type TEXT, value TEXT, scope TEXT, library TEXT
 );
 CREATE INDEX IF NOT EXISTS tokens_value ON tokens (color, alpha);
 
@@ -145,7 +146,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 _ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"), ("ovr", "INTEGER"), ("tnorm", "TEXT"), ("nnorm", "TEXT")),
           "files": (("pages", "TEXT"),),
           "sources": (("project_id", "INTEGER"),),
-          "tokens": (("project_id", "INTEGER"),),
+          "tokens": (("project_id", "INTEGER"), ("type", "TEXT"), ("value", "TEXT"), ("scope", "TEXT"), ("library", "TEXT")),
           "paints": (("hid", "INTEGER"), ("inst", "INTEGER"), ("sect", "INTEGER"), ("screen", "TEXT"),
                      ("first_seen", "TEXT"))}
 # Индексы, которые больше не нужны: в старой базе их убираем, чтобы не занимали место.

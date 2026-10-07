@@ -32,6 +32,12 @@ class Colour(unittest.TestCase):
         self.assertIsNone(colorm.parse("8px"))
 
 
+class HexWithPercent(unittest.TestCase):
+    def test_hex_at_percent(self):
+        self.assertEqual(colorm.parse("#9EA1B6@10%"), ("9EA1B6", 10))
+        self.assertEqual(colorm.parse("#9ea1b6 40%"), ("9EA1B6", 40))
+
+
 class Tokens(unittest.TestCase):
     def test_same_value_two_names_not_merged(self):
         idx = tokens.Index(tokens.parse("name,value\nbg/white,#FFFFFF\ntext/inverse,#FFFFFF\n"))

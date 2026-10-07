@@ -93,7 +93,7 @@ select.in{padding:6px 8px}
 .fmenu{position:absolute;right:6px;top:100%;z-index:6;width:220px}
 
 /* right: content types as a row of icons */
-.types{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 14px 2px}
+.types{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;padding:0 14px 2px}
 .tbtn{position:relative;height:36px;border:0;border-radius:var(--r-sm);background:none;color:var(--label);cursor:pointer;display:grid;place-items:center}
 .tbtn:hover{background:var(--btn);color:var(--txt)}
 .tbtn.on{background:var(--btn);color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent)}
@@ -346,3 +346,28 @@ body.light .scrolling::-webkit-scrollbar-thumb{background:rgba(0,0,0,.25)}
   *{scrollbar-width:thin;scrollbar-color:transparent transparent}
   .scrolling{scrollbar-color:rgba(128,128,128,.45) transparent}
 }
+
+/* tokens: a table like the variables panel in Figma */
+.tcolls{margin:0 0 12px;max-width:100%;overflow-x:auto}
+.tcolls button{flex:none;white-space:nowrap}
+.tokwrap{display:grid;grid-template-columns:200px minmax(0,1fr);gap:12px;align-items:start}
+.tgroups{display:flex;flex-direction:column;gap:1px;position:sticky;top:68px;max-height:calc(100vh - 90px);overflow:auto;background:var(--panel);border-radius:var(--r);padding:6px}
+.tgroups button{display:flex;gap:6px;align-items:center;border:0;background:none;padding:5px 8px;border-radius:5px;cursor:pointer;text-align:left;color:var(--label)}
+.tgroups button:hover{background:var(--btn);color:var(--txt)} .tgroups button.on{background:var(--btn);color:var(--txt);font-weight:500}
+.tgroups em{font-style:normal;margin-left:auto;color:var(--muted);font-size:11px}
+.tablew{background:var(--panel);border-radius:var(--r);overflow:hidden}
+.vtable{width:100%;border-collapse:collapse;font-size:12px}
+.vtable th{position:sticky;top:0;background:var(--panel);text-align:left;font-weight:500;color:var(--muted);padding:9px 10px;border-bottom:1px solid var(--line);z-index:1}
+.vtable td{padding:7px 10px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+.vtable .num{text-align:right;white-space:nowrap}
+.vtable .tgroup td{color:var(--label);font-weight:600;font-size:11px;padding-top:12px;background:var(--panel)}
+.vtable .trow{cursor:pointer} .vtable .trow:hover td,.vtable .trow.open td{background:var(--btn)}
+.vtable .tname{display:flex;align-items:center;gap:8px;min-width:0}
+.vtable .tname>span:not(.sw2):not(.tico):not(.tscope){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vtable .tscope{font-size:10.5px;white-space:nowrap}
+.vtable .tplaces td{background:var(--bg);padding:6px 10px}
+.vtable .tplaces .places{margin:0}
+.tcell{display:inline-flex;align-items:center;gap:6px}
+.vtable .sw2{display:inline-block;width:14px;height:14px;border-radius:3px;border:1px solid var(--line);flex:none}
+.tico{width:14px;height:14px;border-radius:3px;background:var(--btn);display:inline-grid;place-items:center;font-size:9px;color:var(--label);flex:none}
+@media (max-width:1200px){ .tokwrap{grid-template-columns:1fr} .tgroups{position:static;max-height:none;flex-direction:row;flex-wrap:wrap} }

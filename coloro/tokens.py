@@ -37,9 +37,35 @@ class TokensError(ValueError):
     pass
 
 
-# ---------------------------------------------------------------- JSON
+# ---------------------------------------------------------------- разбор
 
-def _from_tree(data) -> list[tuple]:
+# Вид токена — как его называют форматы, к нескольким понятным группам.
+_KINDS = {
+    "color": "color", "colour": "color",
+    "float": "number", "number": "number", "dimension": "number", "spacing": "number", "sizing": "number",
+    "borderradius": "number", "borderwidth": "number", "opacity": "number", "fontsize": "number",
+    "lineheight": "number", "letterspacing": "number", "fontweight": "number", "fontweights": "number",
+    "string": "string", "fontfamily": "string", "fontfamilies": "string", "text": "string", "content": "string",
+    "boolean": "boolean", "typography": "typography", "shadow": "shadow", "boxshadow": "shadow",
+}
+
+
+def _kind(t) -> str:
+    return _KINDS.get(str(t or "").replace("_", "").replace("-", "").lower(), str(t or "").lower() or "other")
+
+
+def _row(name, kind, value, mode="", collection="", scope="", library="") -> dict:
+    """Одна строка справочника: токен в одной теме. Цвет разобран в RRGGBB и прозрачность."""
+    raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False) if value is not None else ""
+    c = colorm.parse(raw) if kind in ("color", "other", "") or not kind else None
+    if c and kind in ("other", ""):
+        kind = "color"
+    return {"name": str(name).strip(), "type": kind, "mode": str(mode or ""), "value": raw.strip(),
+            "color": c[0] if c and kind == "color" else None, "alpha": c[1] if c and kind == "color" else None,
+            "collection": str(collection or ""), "scope": str(scope or ""), "library": str(library or "")}
+
+
+def _from_tree(data) -> list[dict]:
     """W3C Design Tokens и Tokens Studio: обходит дерево, листья — словари с $value / value."""
     flat: dict[str, object] = {}
     types: dict[str, str] = {}
@@ -48,7 +74,7 @@ def _from_tree(data) -> list[tuple]:
         if not isinstance(obj, dict):
             return
         t = obj.get("$type") or inherited_type
-        if "$value" in obj or ("value" in obj and not isinstance(obj.get("value"), dict)):
+        if "$value" in obj or ("value" in obj and (not isinstance(obj.get("value"), dict) or obj.get("type") or obj.get("$type"))):
             key = ".".join(path)
             flat[key] = obj.get("$value", obj.get("value"))
             types[key] = obj.get("$type") or obj.get("type") or t or ""
@@ -69,23 +95,21 @@ def _from_tree(data) -> list[tuple]:
 
     out = []
     for key, raw in flat.items():
-        if types.get(key) and types[key].lower() not in ("color", "colour"):
-            continue
+        kind = _kind(types.get(key))
+        name, coll = key.replace(".", "/"), key.split(".")[0] if "." in key else ""
         val = resolve(raw)
-        if isinstance(val, dict):            # значения по режимам
+        # Значения по режимам — словарь «режим → значение» у цвета (у типографики и теней
+        # словарь — это само значение).
+        if isinstance(val, dict) and kind not in ("typography", "shadow"):
             for mode, mv in val.items():
-                c = colorm.parse(resolve(mv))
-                if c:
-                    out.append((key.replace(".", "/"), *c, str(mode), key.split(".")[0]))
+                out.append(_row(name, kind, resolve(mv), mode, coll))
             continue
-        c = colorm.parse(val)
-        if c:
-            out.append((key.replace(".", "/"), *c, "", key.split(".")[0] if "." in key else ""))
+        out.append(_row(name, kind, val, "", coll))
     return out
 
 
-def _from_list(items) -> list[tuple]:
-    """Выгрузка переменных: [{name, value | values | valuesByMode, collection?}]."""
+def _from_list(items) -> list[dict]:
+    """Выгрузка переменных: [{name, value | values | valuesByMode, type?, collection?, scopes?}]."""
     out = []
     for it in items or []:
         if not isinstance(it, dict):
@@ -93,28 +117,22 @@ def _from_list(items) -> list[tuple]:
         name = str(it.get("name") or "").strip()
         if not name:
             continue
+        kind = _kind(it.get("type") or it.get("resolvedType"))
         coll = str(it.get("collection") or "")
+        scope = ",".join(it.get("scopes") or []) if isinstance(it.get("scopes"), list) else str(it.get("scope") or "")
         vals = it.get("values") or it.get("valuesByMode")
         if isinstance(vals, dict):
             for mode, v in vals.items():
-                c = colorm.parse(v)
-                if c:
-                    out.append((name, *c, str(mode), coll))
+                out.append(_row(name, kind, v, mode, coll, scope))
         elif isinstance(vals, list):
             for i, v in enumerate(vals):
-                c = colorm.parse(v)
-                if c:
-                    out.append((name, *c, str(i + 1), coll))
+                out.append(_row(name, kind, v, str(i + 1), coll, scope))
         else:
-            c = colorm.parse(it.get("value"))
-            if c:
-                out.append((name, *c, "", coll))
+            out.append(_row(name, kind, it.get("value"), "", coll, scope))
     return out
 
 
-# ---------------------------------------------------------------- CSV
-
-def _from_csv(text: str) -> list[tuple]:
+def _from_csv(text: str) -> list[dict]:
     text = text.lstrip("﻿")
     try:
         dialect = csv.Sniffer().sniff(text[:4096], delimiters=";,\t|")
@@ -130,30 +148,33 @@ def _from_csv(text: str) -> list[tuple]:
         raise TokensError("The CSV has no token name column (name, token or Имя)")
     value_is = [i for i, h in enumerate(head)
                 if i != name_i and any(x in h for x in _VALUE_HINTS) and h not in _SKIP_VALUE]
-    type_i = next((i for i, h in enumerate(head) if h in ("тип", "type")), None)
-    coll_i = next((i for i, h in enumerate(head) if h in ("коллекция", "collection")), None)
+    col = lambda *names: next((i for i, h in enumerate(head) if h in names), None)
+    type_i, coll_i = col("тип", "type"), col("коллекция", "collection")
+    scope_i, lib_i = col("скоуп", "scope", "scopes"), col("библиотека", "library")
+    get = lambda r, i: r[i].strip() if i is not None and i < len(r) else ""
     out = []
     for r in rows[1:]:
-        if name_i >= len(r):
-            continue
-        name = r[name_i].strip()
+        name = get(r, name_i)
         if not name:
             continue
-        if type_i is not None and type_i < len(r) and r[type_i].strip() and r[type_i].strip().upper() != "COLOR":
+        kind = _kind(get(r, type_i)) if get(r, type_i) else ""
+        coll, scope, lib = get(r, coll_i), get(r, scope_i), get(r, lib_i)
+        values = [(labels[i] if len(value_is) > 1 else "", get(r, i)) for i in value_is]
+        filled = [(m, v) for m, v in values if v]
+        if not filled:
+            # Значения в файле нет (так бывает у чисел и строк в выгрузках) — токен всё равно
+            # есть в системе, показываем его с пометкой.
+            out.append(_row(name, kind or "other", "", "", coll, scope, lib))
             continue
-        coll = r[coll_i].strip() if coll_i is not None and coll_i < len(r) else ""
-        for n, i in enumerate(value_is):
-            if i < len(r):
-                c = colorm.parse(r[i])
-                if c:
-                    # Несколько колонок значений — это темы (режимы переменной): имя темы —
-                    # заголовок колонки, как его назвал человек.
-                    out.append((name, *c, labels[i] if len(value_is) > 1 else "", coll))
+        for m, v in filled:
+            # Несколько колонок значений — это темы (режимы переменной): имя темы — заголовок
+            # колонки, как его назвал человек.
+            out.append(_row(name, kind, v, m, coll, scope, lib))
     return out
 
 
-def parse(text: str, filename: str = "") -> list[tuple]:
-    """Текст справочника → [(имя, RRGGBB, прозрачность, режим, коллекция)]."""
+def parse_all(text: str, filename: str = "") -> list[dict]:
+    """Текст справочника → все токены: цвета, числа, строки, типографика, тени — по темам."""
     s = (text or "").strip()
     if not s:
         raise TokensError("The file is empty")
@@ -170,8 +191,21 @@ def parse(text: str, filename: str = "") -> list[tuple]:
             rows = _from_tree(data)
     else:
         rows = _from_csv(s)
-    # Повтор одной и той же строки (один токен, один режим) — одна строка. Разные имена
-    # с одним значением остаются разными.
+    # Повтор одной и той же строки — одна строка. Разные имена с одним значением остаются.
+    seen, uniq = set(), []
+    for row in rows:
+        key = tuple(row.values())
+        if key not in seen:
+            seen.add(key)
+            uniq.append(row)
+    if not uniq:
+        raise TokensError("No tokens found in the file")
+    return uniq
+
+
+def parse(text: str, filename: str = "") -> list[tuple]:
+    """Только цветовые токены: [(имя, RRGGBB, прозрачность, режим, коллекция)]."""
+    rows = [(r["name"], r["color"], r["alpha"], r["mode"], r["collection"]) for r in parse_all(text, filename) if r["color"]]
     seen, uniq = set(), []
     for row in rows:
         if row not in seen:
@@ -182,19 +216,25 @@ def parse(text: str, filename: str = "") -> list[tuple]:
     return uniq
 
 
-def store(con, rows: list[tuple], filename: str, project: int | None = None) -> int:
-    """Справочник проекта целиком заменяется новым файлом."""
+def store(con, rows: list, filename: str, project: int | None = None) -> int:
+    """Справочник проекта целиком заменяется новым файлом. rows — строки parse_all или цветовые
+    кортежи parse."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    full = [r if isinstance(r, dict) else {"name": r[0], "type": "color", "mode": r[3], "value": "#" + r[1],
+                                            "color": r[1], "alpha": r[2], "collection": r[4], "scope": "", "library": ""}
+            for r in rows]
     with dbm.writing(con):
         con.execute("DELETE FROM tokens WHERE project_id IS ?", (project,))
-        con.executemany("INSERT INTO tokens (name, color, alpha, mode, collection, project_id) VALUES (?, ?, ?, ?, ?, ?)",
-                        [(*r, project) for r in rows])
+        con.executemany("INSERT INTO tokens (name, color, alpha, mode, collection, project_id, type, value, scope, library)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [(r["name"], r["color"], r["alpha"], r["mode"], r["collection"], project, r["type"], r["value"],
+                          r["scope"], r["library"]) for r in full])
         if project is not None:
             con.execute("UPDATE projects SET tokens_file = ?, tokens_loaded_at = ? WHERE id = ?", (filename, now, project))
         else:
             for k, v in (("tokens_file", filename), ("tokens_loaded_at", now)):
                 con.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (k, v))
-    return len(rows)
+    return len(full)
 
 
 class Index:
@@ -293,7 +333,7 @@ def load(con, project: int | None = None, theme: str | None = None) -> Index:
 
     Если справочник проекту не загружен, система выводится из самих макетов: цвета, которые
     где-то в файлах проекта привязаны к стилю или переменной (см. from_files)."""
-    rows = con.execute("SELECT name, color, alpha, mode, collection FROM tokens WHERE project_id IS ?"
+    rows = con.execute("SELECT name, color, alpha, mode, collection FROM tokens WHERE project_id IS ? AND color IS NOT NULL"
                        " ORDER BY 1, 2, 3, 4, 5", (project,)).fetchall()
     source = "library"
     if not rows and project is not None:
@@ -366,3 +406,88 @@ def usage(idx: Index, colours: list[dict]) -> list[dict]:
         out.append(t)
     out.sort(key=lambda t: (-t["uses"], t["name"]))
     return out
+
+
+# ---------------------------------------------------------------- страница токенов
+
+# Область применения числового токена → какие числа макетов с ним сверять.
+_SCOPE_KINDS = {"STROKE_FLOAT": ("stroke",), "GAP": ("gap",), "CORNER_RADIUS": ("radius",),
+                "ALL_SCOPES": ("gap", "padding", "radius", "stroke"), "": ("gap", "padding", "radius", "stroke")}
+_PX = re.compile(r"(\d+(?:[.,]\d+)?)\s*px\b", re.I)
+
+
+def _number_kinds(name: str, scope: str) -> tuple:
+    for s in (scope or "").split(","):
+        if s.strip() in _SCOPE_KINDS and s.strip() not in ("ALL_SCOPES", ""):
+            return _SCOPE_KINDS[s.strip()]
+    low = name.lower()
+    for hint, kinds in (("radius", ("radius",)), ("border", ("stroke",)), ("stroke", ("stroke",)),
+                        ("gap", ("gap",)), ("padding", ("padding",)), ("spacing", ("gap", "padding")), ("space", ("gap", "padding"))):
+        if hint in low:
+            return kinds
+    if "opacity" in low or "OPACITY" in (scope or "") or "%" in name:
+        return ()
+    return _SCOPE_KINDS[""]
+
+
+def catalog(con, project, idx: "Index", colours: list[dict], props: dict) -> dict:
+    """Все токены проекта одной страницей: по переменной — вид, коллекция, область, значения
+    по темам и сколько раз значение встречается в макетах.
+
+    props: {(вид числа, значение): применений} из макетов — для сверки числовых токенов."""
+    if idx.source == "files":
+        rows = [{"name": n, "type": "color", "mode": m or "", "value": "#" + c, "color": c, "alpha": a,
+                 "collection": coll or "", "scope": "", "library": ""} for n, c, a, m, coll in idx.all_rows]
+    else:
+        rows = [dict(zip(("name", "type", "mode", "value", "color", "alpha", "collection", "scope", "library"), r))
+                for r in con.execute("SELECT name, IFNULL(type, 'color'), IFNULL(mode, ''), IFNULL(value, ''), color, alpha,"
+                                     " IFNULL(collection, ''), IFNULL(scope, ''), IFNULL(library, '') FROM tokens"
+                                     " WHERE project_id IS ? ORDER BY rowid", (project,))]
+    themes = themes_of([(r["name"], r["color"], r["alpha"], r["mode"], r["collection"]) for r in rows])
+    order = {m: i for i, m in enumerate(themes)}
+    by_value = {(c["color"], c["alpha"]): c for c in colours}
+    groups: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r["name"], r["type"], r["collection"], r["library"])
+        g = groups.setdefault(key, {"name": r["name"], "type": r["type"], "collection": r["collection"],
+                                    "library": r["library"], "scope": r["scope"], "values": []})
+        if r["scope"] and r["scope"] not in g["scope"]:
+            g["scope"] = ",".join(x for x in (g["scope"], r["scope"]) if x)
+        if not r["value"] and not r["color"]:
+            continue
+        v = {"mode": r["mode"], "value": r["value"], "color": r["color"], "alpha": r["alpha"],
+             "uses": 0, "raw": 0, "screens": 0, "files": 0, "from_name": False}
+        if r["color"]:
+            used = by_value.get((r["color"], r["alpha"])) or {}
+            v.update(uses=used.get("uses", 0), raw=used.get("raw", 0), screens=used.get("screens", 0), files=used.get("files", 0))
+        if not any(x["mode"] == v["mode"] and x["value"] == v["value"] for x in g["values"]):
+            g["values"].append(v)
+    out = []
+    for g in groups.values():
+        g["values"].sort(key=lambda v: order.get(v["mode"], -1))
+        if g["type"] == "number":
+            if not g["values"]:
+                m = _PX.search(g["name"])
+                if m:
+                    g["values"].append({"mode": "", "value": m.group(1).replace(",", "."), "color": None, "alpha": None,
+                                        "uses": 0, "raw": 0, "screens": 0, "files": 0, "from_name": True})
+            g["kinds"] = list(_number_kinds(g["name"], g["scope"]))
+            for v in g["values"]:
+                try:
+                    n = round(float(str(v["value"]).replace("px", "").replace(",", ".")), 2)
+                except ValueError:
+                    continue
+                v["uses"] = sum(props.get((k, n), 0) for k in g["kinds"])
+        distinct = {(v["value"], v["color"], v["alpha"]) for v in g["values"]}
+        g["constant"] = len(distinct) <= 1
+        if g["constant"]:
+            g["values"] = g["values"][:1]
+        g["uses"] = sum(v["uses"] for v in {(v["value"], v["color"]): v for v in g["values"]}.values())
+        g["raw"] = sum(v["raw"] for v in g["values"])
+        g["screens"] = max((v["screens"] for v in g["values"]), default=0)
+        g["files"] = max((v["files"] for v in g["values"]), default=0)
+        g["empty"] = not g["values"]
+        out.append(g)
+    out.sort(key=lambda g: (["color", "number", "string", "typography", "shadow"].index(g["type"])
+                            if g["type"] in ("color", "number", "string", "typography", "shadow") else 9, -g["uses"], g["name"]))
+    return {"themes": themes, "items": out, "library": idx.source, "theme": idx.theme}

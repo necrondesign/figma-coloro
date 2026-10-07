@@ -47,6 +47,11 @@ results with counts: type, component, variant properties (Size, State…), page.
 with links in one click, ready for a ticket or a message. The search lives in the address, so it
 can be bookmarked and shared.
 
+**Tokens.** A separate table page like the variables panel in Figma: collections as tabs, groups
+from the name path on the left, one column per theme. Every token in the library — colors, numbers,
+strings, typography, shadows; colors and numbers show how often their value is used in the files,
+with unused and set-by-hand tokens marked.
+
 **Typography.** Texts without a style against the system of styles: exactly a style, almost a
 style, off the system — with what exactly the system is missing.
 
