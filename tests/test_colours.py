@@ -47,7 +47,20 @@ class Tokens(unittest.TestCase):
                 "k;Shapes/B2;K;COLOR;#FFFFFF;#2F313C;режим темы\n"
                 "k;Radius/M;K;FLOAT;12;;константа\n")
         rows = tokens.parse(text)
-        self.assertEqual([(r[0], r[1], r[3]) for r in rows], [("Shapes/B2", "FFFFFF", "1"), ("Shapes/B2", "2F313C", "2")])
+        # Две колонки значений — две темы, названные так же, как колонки.
+        self.assertEqual([(r[0], r[1], r[3]) for r in rows], [("Shapes/B2", "FFFFFF", "Главное значение"), ("Shapes/B2", "2F313C", "Второе значение")])
+
+    def test_theme_selects_values(self):
+        rows = [("text/primary", "000000", 100, "Light", "C"), ("text/primary", "FFFFFF", 100, "Dark", "C"),
+                ("brand", "FF006F", 100, "Light", "C")]          # постоянная: одно значение на все темы
+        self.assertEqual(tokens.themes_of(rows), ["Light", "Dark"])
+        dark = tokens.for_theme(rows, "Dark")
+        self.assertEqual(sorted((r[0], r[1]) for r in dark), [("brand", "FF006F"), ("text/primary", "FFFFFF")])
+        idx = tokens.Index(dark, theme="Dark", all_rows=rows)
+        self.assertEqual(idx.exact("000000", 100), [])          # светлое значение в тёмной теме — не токен
+        usage = {t["name"]: t for t in tokens.usage(idx, [])}
+        self.assertEqual([v["mode"] for v in usage["text/primary"]["values"]], ["Light", "Dark"])
+        self.assertTrue(usage["brand"]["constant"])
 
     def test_nearest_reports_alpha_separately(self):
         idx = tokens.Index(tokens.parse("name,value\nblack,#000000\n"))

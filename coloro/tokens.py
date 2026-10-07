@@ -123,7 +123,8 @@ def _from_csv(text: str) -> list[tuple]:
     rows = list(csv.reader(io.StringIO(text), dialect))
     if not rows:
         return []
-    head = [h.strip().lower() for h in rows[0]]
+    labels = [h.strip() for h in rows[0]]
+    head = [h.lower() for h in labels]
     name_i = next((i for i, h in enumerate(head) if h in _NAME_COLS), None)
     if name_i is None:
         raise TokensError("The CSV has no token name column (name, token or Имя)")
@@ -145,7 +146,9 @@ def _from_csv(text: str) -> list[tuple]:
             if i < len(r):
                 c = colorm.parse(r[i])
                 if c:
-                    out.append((name, *c, str(n + 1) if len(value_is) > 1 else "", coll))
+                    # Несколько колонок значений — это темы (режимы переменной): имя темы —
+                    # заголовок колонки, как его назвал человек.
+                    out.append((name, *c, labels[i] if len(value_is) > 1 else "", coll))
     return out
 
 
@@ -197,10 +200,13 @@ def store(con, rows: list[tuple], filename: str, project: int | None = None) -> 
 class Index:
     """Справочник в памяти: поиск по точному значению и ближайшего по виду."""
 
-    def __init__(self, rows: list[tuple], source: str = "library"):
+    def __init__(self, rows: list[tuple], source: str = "library", theme: str | None = None, all_rows=None):
         # source: «library» — загруженный справочник; «files» — выведен из стилей и переменных
-        # самих макетов, когда справочника нет.
+        # самих макетов, когда справочника нет. theme — тема, с которой сверяем (None — все);
+        # all_rows — справочник целиком, со всеми темами, для показа переменных.
         self.source = source
+        self.theme = theme
+        self.all_rows = all_rows if all_rows is not None else rows
         self.by_value: dict[tuple[str, int], list[str]] = {}
         self.items: list[tuple[str, str, int, tuple]] = []
         for name, c, a, _mode, _coll in rows:
@@ -212,7 +218,7 @@ class Index:
         # Статус цвета зависит только от цвета и справочника — запоминаем: на тысячах цветов
         # сравнение с каждым токеном по CIEDE2000 занимает секунды.
         self.classified: dict[tuple[str, int], dict] = {}
-        self.sig = hash((source, tuple(rows)))   # подпись справочника — для памяти результатов
+        self.sig = hash((source, theme, tuple(rows)))   # подпись справочника — для памяти результатов
 
     def __bool__(self) -> bool:
         return bool(self.items)
@@ -255,7 +261,34 @@ Index.same_colour = _same_colour
 _LOADED: dict[tuple, Index] = {}
 
 
-def load(con, project: int | None = None) -> Index:
+def themes_of(rows) -> list[str]:
+    """Темы справочника по порядку появления. Пустой режим — не тема."""
+    seen = []
+    for r in rows:
+        if r[3] and r[3] not in seen:
+            seen.append(r[3])
+    return seen
+
+
+def for_theme(rows, theme: str | None) -> list[tuple]:
+    """Значения, действующие в теме. У переменной со значением в этой теме — оно; у постоянной
+    (одно значение на все темы) — её значение; у переменной без значения в этой теме — ничего."""
+    if not theme:
+        return list(rows)
+    by_name: dict[str, list] = {}
+    for r in rows:
+        by_name.setdefault(r[0], []).append(r)
+    out = []
+    for name, rs in by_name.items():
+        own = [r for r in rs if r[3] == theme]
+        if own:
+            out += own
+        elif len({(r[1], r[2]) for r in rs}) == 1:
+            out.append(rs[0])
+    return out
+
+
+def load(con, project: int | None = None, theme: str | None = None) -> Index:
     """Справочник проекта. Пока он не менялся, отдаётся тот же объект — с запомненными статусами.
 
     Если справочник проекту не загружен, система выводится из самих макетов: цвета, которые
@@ -267,12 +300,14 @@ def load(con, project: int | None = None) -> Index:
         from . import memo
         rows = memo.cached(con, "tokens-from-files", [project], lambda: from_files(con, project))
         source = "files"
-    key = (project, source, tuple(rows))
+    if theme and theme not in themes_of(rows):
+        theme = None
+    key = (project, source, theme, tuple(rows))
     got = _LOADED.get(key)
     if got is None:
         if len(_LOADED) > 16:
             _LOADED.clear()
-        got = _LOADED[key] = Index(rows, source)
+        got = _LOADED[key] = Index(for_theme(rows, theme), source, theme, rows)
     return got
 
 
@@ -300,12 +335,34 @@ def usage(idx: Index, colours: list[dict]) -> list[dict]:
     Какой именно переменной привязан цвет, Figma отдаёт только на тарифе Enterprise, поэтому
     счёт — по значению: все применения цвета, равного значению токена."""
     by_value = {(c["color"], c["alpha"]): c for c in colours}
+    owners: dict[tuple, set] = {}
+    for name, c, a, _m, _coll in idx.all_rows:
+        owners.setdefault((c, a), set()).add(name)
+    tokens: dict[str, dict] = {}
+    for name, c, a, mode, coll in idx.all_rows:
+        t = tokens.setdefault(name, {"name": name, "collection": coll or "", "values": []})
+        if any(v["color"] == c and v["alpha"] == a and v["mode"] == mode for v in t["values"]):
+            continue
+        used = by_value.get((c, a)) or {}
+        t["values"].append({"mode": mode or "", "color": c, "alpha": a, "uses": used.get("uses", 0),
+                            "raw": used.get("raw", 0), "files": used.get("files", 0), "screens": used.get("screens", 0),
+                            "shared": len(owners.get((c, a), ())) > 1})
+    order = {m: i for i, m in enumerate(themes_of(idx.all_rows))}
     out = []
-    for name, c, a, _lab in idx.items:
-        used = by_value.get((c, a))
-        out.append({"name": name, "color": c, "alpha": a, "uses": used["uses"] if used else 0,
-                     "raw": used["raw"] if used else 0, "files": used["files"] if used else 0,
-                     "screens": used["screens"] if used else 0,
-                     "shared": len(idx.exact(c, a)) > 1})
+    for t in tokens.values():
+        t["values"].sort(key=lambda v: order.get(v["mode"], -1))
+        distinct = {(v["color"], v["alpha"]) for v in t["values"]}
+        t["constant"] = len(distinct) == 1
+        if t["constant"]:
+            t["values"] = t["values"][:1]
+        # Применения переменной — по разным значениям, без двойного счёта одинаковых.
+        seen = {}
+        for v in t["values"]:
+            seen[(v["color"], v["alpha"])] = v
+        t["uses"] = sum(v["uses"] for v in seen.values())
+        t["raw"] = sum(v["raw"] for v in seen.values())
+        t["screens"] = max((v["screens"] for v in seen.values()), default=0)
+        t["files"] = max((v["files"] for v in seen.values()), default=0)
+        out.append(t)
     out.sort(key=lambda t: (-t["uses"], t["name"]))
     return out

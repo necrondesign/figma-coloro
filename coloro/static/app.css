@@ -239,6 +239,12 @@ button.tile{cursor:pointer} button.tile:hover{background:var(--btn)}
 .sample.waiting{animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.45}}
 .kswitch{margin:4px 0 6px}
+.tpair{display:flex;padding:0}
+.tpair i{position:static;flex:1;height:100%;border:0;border-radius:0}
+.tvals{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;white-space:normal}
+.tval{display:inline-flex;gap:4px;align-items:center}
+.tval.dim{opacity:.4}
+.tval .sw2{display:inline-block;width:10px;height:10px;border-radius:3px;border:1px solid var(--line)}
 .summary{background:var(--panel);border-radius:var(--r);margin-bottom:18px}
 .sumhead{width:100%;display:flex;align-items:center;gap:8px;border:0;background:none;padding:10px 14px;cursor:pointer;text-align:left;font-weight:600;font-size:12px;color:var(--txt)}
 .summary.closed .sumbody{display:none}

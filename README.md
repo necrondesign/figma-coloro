@@ -35,7 +35,8 @@ family, searchable by hex, token and file), split by what to do about it:
 
 Colour difference is CIEDE2000, the way the eye sees it. Next to it: **gradients** as recipes
 (type and stops in order) and **tokens**, showing which tokens of the library are used in the
-files and which are never used.
+files and which are never used. Variables with themes (light, dark) show as one row with their
+value in every theme, and the files can be compared with one theme at a time.
 
 **Search.** One bar at the top: text in any word form and order, in text layers, layer names and
 component names (then every instance is found); width and height with a tolerance; a colour with a

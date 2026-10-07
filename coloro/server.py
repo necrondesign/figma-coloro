@@ -248,8 +248,11 @@ def state(con) -> dict:
         srcs.append({"id": sid, "url": url, "file_key": fk, "node_id": node, "added_at": added, "project": pid,
                      "pages": json.loads(pages) if pages else None, "file": files.get(fk)})
     counts = dict(con.execute("SELECT project_id, COUNT(DISTINCT name) FROM tokens GROUP BY project_id").fetchall())
+    themes: dict = {}
+    for pid, mode in con.execute("SELECT project_id, mode FROM tokens WHERE IFNULL(mode, '') != '' GROUP BY project_id, mode ORDER BY MIN(rowid)"):
+        themes.setdefault(pid, []).append(mode)
     projects = [{"id": pid, "name": name, "created_at": created,
-                 "tokens": {"file": tf, "loaded_at": tl, "count": counts.get(pid, 0)},
+                 "tokens": {"file": tf, "loaded_at": tl, "count": counts.get(pid, 0), "themes": themes.get(pid, [])},
                  "files": len({s["file_key"] for s in srcs if s["project"] == pid})}
                 for pid, name, created, tf, tl in con.execute(
                     "SELECT id, name, created_at, tokens_file, tokens_loaded_at FROM projects ORDER BY id")]
@@ -402,8 +405,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get(self, con, path: str, q: dict):
         filt = Filter.from_query(q)
-        idx = tokens.load(con, filt.project)
         flat = {k: v[0] for k, v in q.items()}
+        idx = tokens.load(con, filt.project, flat.get("theme") or None)
         if path == "/api/state":
             return self._json(state(con))
         if path == "/api/overview":
@@ -422,7 +425,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"items": remember("gradients", lambda: inventory.gradients(con, filt))})
         if path == "/api/tokens/usage":
             items = remember("colours", lambda: inventory.colours(con, filt, idx))
-            return self._json({"items": tokens.usage(idx, items), "library": idx.source})
+            return self._json({"items": tokens.usage(idx, items), "library": idx.source,
+                               "themes": tokens.themes_of(idx.all_rows), "theme": idx.theme})
         limit = max(1, min(5000, int(flat.get("limit") or 60)))
         if path in ("/api/places", "/api/screens"):
             c = flat.get("color", "").upper()

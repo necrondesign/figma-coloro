@@ -85,11 +85,14 @@ const S = {
   filters: { ...DEFAULT_F, ...LS.get("filters", {}) },
   show: Object.fromEntries(Object.entries(DEFAULT_SHOW).map(([k, v]) => [k, { ...v, ...(LS.get("show", {})[k] || {}) }])),
   off: LS.get("off", {}),          // project → file keys switched off in the left panel
+  themes: LS.get("themes", {}),    // project → theme the colors are compared with (none = all themes)
   search: null,                    // active search, or null
   overview: null,
   facets: null,
 };
-const save = () => { LS.set("project", S.project); LS.set("type", S.type); LS.set("filters", S.filters); LS.set("show", S.show); LS.set("off", S.off); };
+const save = () => { LS.set("project", S.project); LS.set("type", S.type); LS.set("filters", S.filters); LS.set("show", S.show); LS.set("off", S.off); LS.set("themes", S.themes); };
+const projectThemes = () => ((project() || {}).tokens || {}).themes || [];
+const modeName = (m) => (!m ? "" : /^\d+$/.test(m) ? `Mode ${m}` : m);
 
 const project = () => (S.st ? S.st.projects.find((p) => p.id === S.project) || S.st.projects[0] : null);
 const sources = () => (S.st ? S.st.sources.filter((s) => s.project === (project() || {}).id) : []);
@@ -106,6 +109,8 @@ function fq(extra = {}) {
   if (f.archive) q.set("archive", "1");
   if (!f.instances) q.set("instances", "0");
   for (const k of ["pages", "skip", "since", "modified_since"]) if (f[k]) q.set(k, f[k]);
+  const th = S.themes[S.project];
+  if (th && projectThemes().includes(th)) q.set("theme", th);
   const off = offKeys();
   if (off.length) {
     const on = [...new Set(sources().map((s) => s.file_key))].filter((k) => !off.includes(k));
@@ -886,9 +891,16 @@ function colourWhat(i) {
   const tag = { near: "Near token", alpha: "Opacity mismatch", off: "Off-system" }[i.status];
   return `<span class="tag ${i.status}">${tag}</span>${near}`;
 }
-const colorViews = () => seg([["colors", "Colors"], ["gradients", "Gradients"], ["tokens", "Tokens"]], S.show.colors.view, "cview");
+const colorViews = () => {
+  const themes = projectThemes();
+  const theme = themes.includes(S.themes[S.project]) ? S.themes[S.project] : "";
+  return seg([["colors", "Colors"], ["gradients", "Gradients"], ["tokens", "Tokens"]], S.show.colors.view, "cview")
+    + (themes.length > 1 ? `<div class="field" style="margin-top:8px"><span class="label">Compare with theme</span>${select("theme", [["", "All themes"], ...themes.map((m) => [m, modeName(m)])], theme)}</div>` : "");
+};
 function bindColorViews(root) {
   root.querySelectorAll("[data-cview]").forEach((b) => (b.onclick = () => { S.show.colors.view = b.dataset.cview; save(); route(); }));
+  const th = root.querySelector("[data-sel=theme]");
+  if (th) th.onchange = (e) => { e.stopImmediatePropagation(); S.themes[S.project] = th.value; save(); reload(); };
 }
 
 async function viewColors(el, stale) {
@@ -1007,15 +1019,16 @@ async function viewTokens(el, stale) {
     return;
   }
   const q = (sh.q || "").toLowerCase().replace("#", "");
-  const base = d.items.filter((t) => !q || t.name.toLowerCase().includes(q) || t.color.toLowerCase().includes(q));
-  const cats = [["all", "All"], ["used", "Used"], ["unused", "Unused"]];
-  const inT = (t, k) => k === "all" || (k === "used" ? t.uses > 0 : t.uses === 0);
+  const base = d.items.filter((t) => !q || t.name.toLowerCase().includes(q) || t.values.some((v) => v.color.toLowerCase().includes(q)));
+  const themes = d.themes || [];
+  const cats = [["all", "All"], ["used", "Used"], ["unused", "Unused"], ...(themes.length > 1 ? [["themed", "Change with theme"], ["constant", "Same in all themes"]] : [])];
+  const inT = (t, k) => k === "all" || (k === "used" ? t.uses > 0 : k === "unused" ? t.uses === 0 : k === "themed" ? !t.constant : t.constant);
   const items = base.filter((t) => inT(t, sh.cat));
   $("#tname").innerHTML = `Colors<span>${pl(d.items.length, "token")}</span>`;
   drawShow(`${colorViews()}<div class="sec">Usage</div>${chips(cats.map(([k, t]) => [k, t, base.filter((x) => inT(x, k)).length]), sh.cat)}
     <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Token name or hex"></div>`,
   (root) => { bindShow(root, "tokens", () => route()); bindColorViews(root); });
-  el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens</h1><p class="sub">${d.library === "files"
+  el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens${d.theme ? " · " + esc(modeName(d.theme)) : ""}</h1><p class="sub">${themes.length > 1 ? `${pl(themes.length, "theme")}: ${themes.map((m) => esc(modeName(m))).join(", ")}. Each row is a variable with its value in every theme. ` : ""}${d.library === "files"
       ? "No token library is loaded, so this is the system taken from the files: every color used through a style or a variable. Style names are shown; variable names need a token library."
       : "The token library against the files. Uses count every color equal to the token value: Figma reports which variable a color is bound to only on the Enterprise plan. Unused tokens may be obsolete."}</p></div></div><div class="list" id="list"></div>`;
   {
@@ -1029,12 +1042,26 @@ async function viewTokens(el, stale) {
       ],
     });
   }
-  rowsWithPlaces($("#list"), items, (t, n) => `<div class="crow" data-n="${n}">${swatch(t.color, t.alpha)}
-      <div class="name">${esc(t.name)}<small class="mono">#${esc(t.color)}${t.alpha < 100 ? " · " + t.alpha + "%" : ""}${t.shared ? " · same value as another token" : ""}</small></div>
+  const valueChip = (v, constant) => `<span class="tval${d.theme && v.mode && v.mode !== d.theme ? " dim" : ""}" title="${esc(modeName(v.mode) || "Value")} · ${pl(v.uses, "use")}">
+      <span class="sw2" style="background:#${v.color};opacity:${v.alpha / 100}"></span><span class="mono">#${esc(v.color)}${v.alpha < 100 ? " " + v.alpha + "%" : ""}</span>${v.mode && !constant ? `<span class="muted">${esc(modeName(v.mode))}</span>` : ""}</span>`;
+  rowsWithPlaces($("#list"), items, (t, n) => {
+    const first = t.values[0];
+    return `<div class="crow trow" data-n="${n}">${t.constant ? swatch(first.color, first.alpha)
+        : `<span class="sample tpair">${t.values.slice(0, 2).map((v) => `<i style="background:#${v.color};opacity:${v.alpha / 100}"></i>`).join("")}</span>`}
+      <div class="name">${esc(t.name)}<small>${t.collection ? esc(t.collection) + " · " : ""}${t.constant ? (themes.length > 1 ? "Same in all themes" : "") : pl(t.values.length, "value")}</small></div>
       ${counts({ uses: t.uses, screens: t.screens, files: t.files, unit: "use" })}
-      <div class="what">${t.uses ? (t.raw ? `<span class="tag unbound">Set by hand</span>${num(t.raw)} of ${num(t.uses)}` : '<span class="tag token">Used</span>') : '<span class="tag off">Unused</span>'}</div></div>`,
-  (t, box) => (t.uses ? colorPlaces((x) => x.color, (x) => x.alpha)(t, box)
-    : (box.innerHTML = '<p class="muted" style="padding:6px 0">This token value is not used in the selected files.</p>')));
+      <div class="what tvals">${t.values.map((v) => valueChip(v, t.constant)).join("")}${t.uses ? (t.raw ? ` <span class="tag unbound">Set by hand ${num(t.raw)}</span>` : "") : ' <span class="tag off">Unused</span>'}</div></div>`;
+  },
+  (t, box) => {
+    const used = t.values.filter((v) => v.uses);
+    if (!used.length) { box.innerHTML = '<p class="muted" style="padding:6px 0">No value of this token is used in the selected files.</p>'; return; }
+    const show = (v) => {
+      box.innerHTML = (t.values.length > 1 ? `<div class="vchips" style="margin-left:0">${t.values.map((x, i) => `<button class="chip ${x === v ? "on" : ""}" data-vi="${i}" ${x.uses ? "" : "disabled"}>${esc(modeName(x.mode) || "Value")} · #${esc(x.color)}<em>${num(x.uses)}</em></button>`).join("")}</div>` : "") + '<div class="tres"></div>';
+      box.querySelectorAll("[data-vi]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); show(t.values[+b.dataset.vi]); }));
+      colorPlaces(() => v.color, () => v.alpha)(t, box.querySelector(".tres"));
+    };
+    show(used[0]);
+  });
 }
 
 /* ───────────────────── typography ───────────────────── */
