@@ -243,7 +243,7 @@ function drawFiles() {
     </div>`;
   }).join("") : `<div class="empty" style="margin:6px;padding:18px"><b>No files yet</b>Add a link to a Figma file.<br><button class="b main" id="emptyAdd">Add file</button></div>`;
   const ea = $("#emptyAdd");
-  if (ea) ea.onclick = () => { $("#addForm").hidden = false; $("#addForm").elements.url.focus(); };
+  if (ea) ea.onclick = () => addFilesDialog();
   $$("#files .file").forEach((row) => {
     const key = row.dataset.key;
     row.querySelector("input").onchange = (e) => {
@@ -288,20 +288,45 @@ function drawFiles() {
 }
 
 $("#allFiles").onclick = () => { S.off[S.project] = []; save(); drawFiles(); reload(); };
-$("#addBtn").onclick = () => { const f = $("#addForm"); f.hidden = !f.hidden; if (!f.hidden) f.elements.url.focus(); };
-$("#addCancel").onclick = () => { $("#addForm").hidden = true; };
-$("#addForm").onsubmit = async (e) => {
-  e.preventDefault();
-  const f = e.target;
-  const pages = f.elements.pages.value.split(",").map((x) => x.trim()).filter(Boolean);
-  try {
-    const r = await api("/api/sources", { url: f.elements.url.value.trim(), pages, project: S.project });
-    f.reset(); f.hidden = true;
-    toast("File added");
-    await refresh();
-    startUpdate({ file_key: r.file_key, project: S.project });
-  } catch (err) { toast(err.message, "err"); }
-};
+/** Добавить файлы в текущий проект: несколько ссылок сразу, страницы и токен, если его нет. */
+function addFilesDialog() {
+  const p = project();
+  const needToken = !S.st.figma_token;
+  dialog(`Add files to ${p.name}`, `
+    <form id="afForm">
+      <div class="f"><span class="label">Figma file links</span><textarea class="in" name="links" placeholder="https://www.figma.com/design/…&#10;One link per line" required></textarea>
+        <span class="hint">A link to a file, a page or a frame. The whole file is loaded; the filters decide what to count.</span></div>
+      <div class="f"><span class="label">Only pages whose name contains</span><input class="in" name="pages" placeholder="All pages">
+        <span class="hint">For example, ready or release. Separate several words with commas. Can be changed later for each file.</span></div>
+      ${needToken ? `<div class="f"><span class="label">Figma access token</span><input class="in" type="password" name="token" placeholder="figd_…" autocomplete="off">
+        <span class="hint">${TOKEN_WHY}</span></div>` : ""}
+      <div class="acts"><button type="button" class="b quiet" id="afCancel">Cancel</button><button class="b main">Add and load</button></div>
+    </form>`);
+  $("#afCancel").onclick = closeDialog;
+  $("#afForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target, btn = f.querySelector(".b.main");
+    const links = f.elements.links.value.split(/\s+/).map((x) => x.trim()).filter(Boolean);
+    const pages = f.elements.pages.value.split(",").map((x) => x.trim()).filter(Boolean);
+    if (!links.length) { toast("Paste at least one link", "err"); return; }
+    btn.disabled = true;
+    try {
+      if (needToken && f.elements.token.value.trim()) await api("/api/figma-token", { token: f.elements.token.value.trim() });
+      const bad = [];
+      for (const url of links) {
+        try { await api("/api/sources", { url, pages, project: p.id }); } catch (err) { bad.push(`${url}: ${err.message}`); }
+      }
+      if (bad.length === links.length) { for (const b of bad) toast(b, "err", true); btn.disabled = false; return; }
+      closeDialog();
+      toast(`${pl(links.length - bad.length, "file")} added`, "ok");
+      for (const b of bad) toast(b, "err", true);
+      await refresh();
+      if (S.st.figma_token) startUpdate({ project: p.id });
+      else { toast("Add a Figma access token to load the files", "err"); openSettings(); }
+    } catch (err) { toast(err.message, "err"); btn.disabled = false; }
+  };
+}
+$("#addBtn").onclick = () => addFilesDialog();
 
 /* ───────────────────── update job ───────────────────── */
 
@@ -754,7 +779,7 @@ async function viewOverview(el, stale) {
   const p = project();
   if (!sources().length) {
     el.innerHTML = `<div class="empty"><b>Add a Figma file to ${esc(p ? p.name : "this project")}</b>Paste a link to a file. coloro loads it and shows what follows the design system and what does not.<br><button class="b main" id="ovAdd">Add file</button></div>`;
-    $("#ovAdd").onclick = () => { setClosed("l", false); $("#addForm").hidden = false; $("#addForm").elements.url.focus(); };
+    $("#ovAdd").onclick = () => addFilesDialog();
     return;
   }
   const o = S.overview || await api("/api/overview" + fq());
@@ -1290,7 +1315,7 @@ function newProjectDialog() {
       if (links.length > bad.length) {
         if (S.st.figma_token) startUpdate({ project: r.id });
         else { toast("Add a Figma access token to load the files", "err"); openSettings(); }
-      } else { setClosed("l", false); }
+      } else { addFilesDialog(); }
     } catch (err) { toast(err.message, "err"); btn.disabled = false; }
   };
 }
