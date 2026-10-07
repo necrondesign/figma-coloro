@@ -18,3 +18,8 @@ colors-report.html
 
 __pycache__/
 .DS_Store
+
+# База coloro v2
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
