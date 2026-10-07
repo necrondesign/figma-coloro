@@ -138,7 +138,7 @@ def images(con, filt: Filter, limit: int = 300) -> dict:
               "max_w": (w or 0) / 10, "max_h": (h or 0) / 10, "name": name}
              for ref, uses, screens, files, modes, first, fk, w, h, name in rows[:limit]]
     return {"total": len(rows), "total_uses": sum(r[1] for r in rows),
-            "once": sum(1 for r in rows if r[1] == 1), "items": items}
+            "once": sum(1 for r in rows if r[1] == 1), "heavy": sum(1 for r in rows if r[1] >= 20), "items": items}
 
 
 def image_condition(q: dict) -> tuple[str, list]:

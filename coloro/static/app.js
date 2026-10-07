@@ -81,7 +81,7 @@ const DEFAULT_SHOW = {
 const S = {
   st: null,
   project: LS.get("project", null),
-  type: LS.get("type", "overview"),
+  type: ((t) => (t === "overview" ? "colors" : t))(LS.get("type", "colors")),
   filters: { ...DEFAULT_F, ...LS.get("filters", {}) },
   show: Object.fromEntries(Object.entries(DEFAULT_SHOW).map(([k, v]) => [k, { ...v, ...(LS.get("show", {})[k] || {}) }])),
   off: LS.get("off", {}),          // project → file keys switched off in the left panel
@@ -287,6 +287,7 @@ function drawFiles() {
   drawJob();
 }
 
+$("#export").onclick = () => toast("Building the report. Large projects take up to 20 seconds.");
 $("#allFiles").onclick = () => { S.off[S.project] = []; save(); drawFiles(); reload(); };
 /** Добавить файлы в текущий проект: несколько ссылок сразу, страницы и токен, если его нет. */
 function addFilesDialog() {
@@ -346,6 +347,8 @@ function drawJob() {
   } else {
     const last = files.map((f) => f.loaded_at || f.checked_at).filter(Boolean).sort().pop();
     $("#jobStatus").textContent = files.length ? `Updated ${ago(last)}` : "";
+    $("#export").hidden = !files.length;
+    $("#export").href = "/api/export" + fq();
     btn.innerHTML = ICON.update + "Update"; btn.className = "b main";
     btn.disabled = !sources().length;
     btn.onclick = () => startUpdate({ project: S.project });
@@ -389,7 +392,6 @@ async function pollJob() {
 /* ───────────────────── right: types and options ───────────────────── */
 
 const TYPES = [
-  { k: "overview", t: "Overview", icon: "M2.5 13.5v-5M6.5 13.5v-9M10.5 13.5v-6M13.5 13.5v-11" },
   { k: "colors", t: "Colors", lv: "stray", icon: "M8 2.5a5.5 5.5 0 1 0 0 11c1 0 1.2-.8.8-1.5-.5-.8 0-1.8 1-1.8h1.4a2.3 2.3 0 0 0 2.3-2.3C13.5 4.8 11 2.5 8 2.5Z" },
   { k: "typography", t: "Typography", lv: "text_nostyle_pct", icon: "M3 4h10M8 4v9M5.5 13h5" },
   { k: "text", t: "Text", icon: "M2.5 4h11M2.5 7h11M2.5 10h7M2.5 13h9" },
@@ -577,7 +579,7 @@ async function route() {
   $("#show").innerHTML = "";
   if (!S.search && S.facets) { S.facets = null; drawFiles(); }
   // В проекте нет файлов — любой экран предлагает добавить файл, а не показывает пустой список.
-  const view = !sources().length ? viewOverview : VIEWS[t.k];
+  const view = !sources().some((x) => x.file) && !S.search ? viewEmpty : VIEWS[t.k];
   try { await view(el, stale); }
   catch (e) { if (!stale()) el.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 }
@@ -775,91 +777,75 @@ function spark(values, good) {
   return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" aria-hidden="true"><path d="${pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("")}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/><circle cx="${last[0]}" cy="${last[1]}" r="2.5" fill="${color}"/></svg>`;
 }
 
-async function viewOverview(el, stale) {
+/** Проект без файлов или с незагруженными файлами — любой раздел показывает, что сделать. */
+async function viewEmpty(el) {
   const p = project();
   if (!sources().length) {
-    el.innerHTML = `<div class="empty"><b>Add a Figma file to ${esc(p ? p.name : "this project")}</b>Paste a link to a file. coloro loads it and shows what follows the design system and what does not.<br><button class="b main" id="ovAdd">Add file</button></div>`;
+    el.innerHTML = `<div class="empty"><b>Add a Figma file to ${esc(p ? p.name : "this project")}</b>Paste a link to a file. coloro loads it and shows what follows the design system and what does not.<br><button class="b main" id="ovAdd">Add files</button></div>`;
     $("#ovAdd").onclick = () => addFilesDialog();
     return;
   }
-  const o = S.overview || await api("/api/overview" + fq());
-  if (stale()) return;
-  if (!o.files.length) {
-    el.innerHTML = `<div class="empty"><b>Files are not loaded yet</b>The links are added. Load the files from Figma to see the picture.<br><button class="b main" id="ovUpd">Update</button></div>`;
-    $("#ovUpd").onclick = () => startUpdate({ project: S.project });
-    return;
-  }
-  const t = o.totals, tr = o.trend && o.trend.total;
-  const since = o.trend ? ` since ${day(o.trend.since)}` : "";
-  const tile = (title, value, sub, key, isPct, goTo) => {
-    const d = tr ? trendText(key, tr[key], isPct) : "";
-    return `<button class="tile" ${goTo ? `data-go='${esc(JSON.stringify(goTo))}'` : "disabled"}>
-      <div class="t">${title}</div><div class="v">${value}</div><div class="d">${d ? d + since : sub}</div></button>`;
-  };
-  $("#tname").innerHTML = `Overview<span>${pl(o.files.length, "file")}</span>`;
-  el.innerHTML = `
-    <div class="head"><div class="grow"><h1>${esc(p.name)}</h1><p class="sub">${pl(o.files.length, "file")} · ${num(t.layers)} layers · ${num(t.uses)} color uses</p></div>
-      <a class="b" href="/api/export${fq()}" download id="export">${ICON.download}Download report</a></div>
-    ${o.tokens ? "" : `<div class="notice">Load the project’s token library to find stray colors. <a id="ovTok">Open settings</a></div>`}
-    <div class="tiles">
-      ${tile("Colors from the system", pct(t.bound_pct), "of color uses go through a token or style", "bound_pct", true, ["colors", { key: "colors", values: { view: "colors", cat: "all" } }])}
-      ${tile("Stray colors", o.tokens ? num(t.stray) : "—", o.tokens ? `near ${num(t.near)} · opacity ${num(t.alpha)} · off ${num(t.off)}` : "A token library is required", "stray", false, o.tokens ? ["colors", { key: "colors", values: { view: "colors", cat: "off" } }] : null)}
-      ${tile("Unbound colors", o.tokens ? num(t.unbound) : "—", "equal to a token, set by hand", "unbound", false, o.tokens ? ["colors", { key: "colors", values: { view: "colors", cat: "unbound" } }] : null)}
-      ${tile("Unstyled text", pct(t.text_nostyle_pct), `${num(t.text_nostyle)} texts placed by hand`, "text_nostyle_pct", true, ["typography", { values: { cat: "all" } }])}
-      ${tile("Off-scale values", pct(t.scale_off_pct), `${num(t.scale_off)} spacing, radius and stroke values`, "scale_off_pct", true, ["spacing", { values: { cat: "off" } }])}
-      ${tile("Unnamed layers", num(t.generic), "frames and groups with default names", "generic", false, null)}
-    </div>
-    <div id="history"></div>
-    <h2>Issues by file</h2>
-    <p class="sub">Sorted by severity. Select a cell to see the places in that file.</p>
-    <div class="mapw"><table class="map">
-      <tr><th>File</th>${COLUMNS.map((c) => `<th title="${esc(c.hint)}">${c.title}</th>`).join("")}</tr>
-      ${o.files.map((f) => {
-        const m = f.metrics;
-        const failed = f.pages.failed ? ` · <span class="dn">${pl(f.pages.failed, "page")} failed</span>` : "";
-        return `<tr><td class="f">${esc(f.name)}<small>Modified ${esc(day(f.last_modified))}${failed}</small></td>${COLUMNS.map((c) => {
-          const v = m[c.key], lv = m.levels[c.key] || "none";
-          const text = v == null ? "—" : c.pct ? pct(v) : num(v);
-          const d = o.trend && o.trend.by_file[f.file_key] ? trendText(c.key, o.trend.by_file[f.file_key][c.key], c.pct) : "";
-          return `<td class="c lv-${lv} ${c.go && v != null ? "go" : ""}" data-file="${esc(f.file_key)}" data-col="${c.key}" title="${esc(c.hint)}">${text}${d ? " " + d : ""}</td>`;
-        }).join("")}</tr>`;
-      }).join("")}
-    </table></div>
-    <div class="legend"><span><i class="lv-good"></i>Good</span><span><i class="lv-fair"></i>Needs attention</span><span><i class="lv-bad"></i>Poor</span>
-      ${o.trend ? `<span>Arrows show changes since ${esc(day(o.trend.since))}</span>` : ""}</div>`;
-  el.querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => { const [type, show] = JSON.parse(b.dataset.go); go(type, show); }));
-  const tok = $("#ovTok");
-  if (tok) tok.onclick = openSettings;
-  $("#export").onclick = () => toast("Building the report. Large projects take up to 20 seconds.");
-  el.querySelectorAll("td.go").forEach((c) => (c.onclick = () => {
-    const col = COLUMNS.find((x) => x.key === c.dataset.col);
-    const all = [...new Set(sources().map((s) => s.file_key))];
-    S.off[S.project] = all.filter((k) => k !== c.dataset.file);
-    save();
-    loadOverview().then(() => { drawFiles(); go(col.go[0], col.go[1]); });
-  }));
-  drawHistory($("#history"));
+  el.innerHTML = `<div class="empty"><b>Files are not loaded yet</b>The links are added. Load the files from Figma to see the results.<br><button class="b main" id="ovUpd">Update</button></div>`;
+  $("#ovUpd").onclick = () => startUpdate({ project: S.project });
 }
 
-async function drawHistory(box) {
+/* ───────────────────── section summary ───────────────────── */
+
+const OT = () => (S.overview ? S.overview.totals : {});
+const usesOf = (list) => list.reduce((n, i) => n + i.uses, 0);
+
+
+/* У каждого раздела своя сводка: главные числа со стрелками с прошлого обновления,
+   рекомендации по порядку пользы с кнопкой «показать», файлы, где хуже всего, и график. */
+const since = () => (S.overview && S.overview.trend ? ` since ${day(S.overview.trend.since)}` : "");
+function summary(el, cfg) {
+  const open = LS.get("summary.open", true);
+  const tr = S.overview && S.overview.trend && S.overview.trend.total;
+  const tiles = cfg.tiles.map((t) => {
+    const d = tr && t.key ? trendText(t.key, tr[t.key], t.pct) : "";
+    return `<div class="tile"><div class="t">${t.t}</div><div class="v">${t.v}</div><div class="d">${d ? d + since() : t.sub || ""}</div></div>`;
+  }).join("");
+  const recs = cfg.recs.filter((r) => r.n > 0 || r.always);
+  const files = cfg.file && S.overview ? S.overview.files.filter((f) => f.metrics[cfg.file.key] != null)
+    .sort((a, b) => (b.metrics[cfg.file.key] || 0) - (a.metrics[cfg.file.key] || 0)).slice(0, 6) : [];
+  const box = document.createElement("section");
+  box.className = "summary" + (open ? "" : " closed");
+  box.innerHTML = `<button class="sumhead"><span class="grow">Summary</span><svg class="i" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></button>
+    <div class="sumbody">
+      <div class="tiles">${tiles}</div>
+      ${recs.length ? `<h3>Recommendations</h3><div class="recs">${recs.map((r, i) => `<div class="rec"><span class="rn">${r.n != null ? kilo(r.n) : "!"}</span>
+        <div class="rt"><b>${esc(r.title)}</b><span>${esc(r.text)}</span></div>${r.go ? `<button class="b sm" data-rec="${i}">${esc(r.label || "Show")}</button>` : ""}</div>`).join("")}</div>`
+        : `<h3>Recommendations</h3><p class="sub">Nothing to fix here under the current filters.</p>`}
+      ${files.length > 1 ? `<h3>Where it is worst · ${esc(cfg.file.title)}</h3><div class="sfiles">${files.map((f) => {
+        const v = f.metrics[cfg.file.key], lv = f.metrics.levels[cfg.file.key] || "none";
+        return `<button class="sfile" data-file="${esc(f.file_key)}"><span class="grow">${esc(f.name)}</span><span class="lv lv-${lv}">${cfg.file.pct ? pct(v) : num(v)}</span></button>`;
+      }).join("")}</div>` : ""}
+      <div class="shist"></div>
+    </div>`;
+  el.prepend(box);
+  box.querySelector(".sumhead").onclick = () => { box.classList.toggle("closed"); LS.set("summary.open", !box.classList.contains("closed")); };
+  box.querySelectorAll("[data-rec]").forEach((b) => (b.onclick = () => recs[+b.dataset.rec].go()));
+  box.querySelectorAll("[data-file]").forEach((b) => (b.onclick = () => {
+    const all = [...new Set(sources().map((x) => x.file_key))];
+    S.off[S.project] = all.filter((k) => k !== b.dataset.file);
+    save(); reload();
+  }));
+  if (cfg.history && cfg.history.length) sectionHistory(box.querySelector(".shist"), cfg.history);
+}
+
+async function sectionHistory(box, keys) {
   const d = await api("/api/history" + fq()).catch(() => null);
-  if (!d || !box.isConnected) return;
+  if (!d || !box.isConnected || d.points.length < 2) return;
   const pts = d.points;
-  if (pts.length < 2) {
-    box.innerHTML = '<p class="sub" style="margin-top:14px">A history chart appears after an update that changes something.</p>';
-    return;
-  }
-  box.innerHTML = `<h2>How it changed</h2><p class="sub">${pl(pts.length, "snapshot")} from ${esc(day(pts[0].taken_at))} to ${esc(day(pts[pts.length - 1].taken_at))}. Green means better, red means worse.</p>
-    <div class="tiles">${HISTORY.map((h) => {
-      const vals = pts.map((p) => p.metrics[h.key] ?? null);
-      const first = vals.find((v) => v != null), last = vals[vals.length - 1];
-      if (first == null || last == null) return "";
-      const better = h.up ? last >= first : last <= first;
-      const diff = last - first;
-      const show = (v) => (h.pct ? pct(v) : num(v));
-      return `<div class="tile"><div class="t">${h.title}</div><div class="v">${show(last)}</div>
-        <div class="d">${diff ? `${diff > 0 ? "+" : "−"}${show(Math.abs(diff))} since ${esc(day(pts[0].taken_at))}` : "No change"}</div>${spark(vals, better)}</div>`;
-    }).join("")}</div>`;
+  box.innerHTML = `<h3>How it changed · ${pl(pts.length, "snapshot")} since ${esc(day(pts[0].taken_at))}</h3><div class="tiles">${HISTORY.filter((h) => keys.includes(h.key)).map((h) => {
+    const vals = pts.map((p) => p.metrics[h.key] ?? null);
+    const first = vals.find((v) => v != null), last = vals[vals.length - 1];
+    if (first == null || last == null) return "";
+    const better = h.up ? last >= first : last <= first;
+    const diff = last - first, show = (v) => (h.pct ? pct(v) : num(v));
+    return `<div class="tile"><div class="t">${h.title}</div><div class="v">${show(last)}</div>
+      <div class="d">${diff ? `${diff > 0 ? "+" : "−"}${show(Math.abs(diff))}` : "No change"}</div>${spark(vals, better)}</div>`;
+  }).join("")}</div>`;
 }
 
 /* ───────────────────── colors ───────────────────── */
@@ -934,6 +920,29 @@ async function viewColors(el, stale) {
       <p class="sub">${esc(CHINT[sh.cat])} ${pl(items.length, "color")} · ${pl(items.reduce((n, i) => n + i.uses, 0), "use")}</p></div></div>
     ${d.tokens ? "" : `<div class="notice">No token library for this project, so colors cannot be compared with tokens. <a id="cTok">Open settings</a></div>`}
     <div class="list" id="list"></div>`;
+  {
+    const all = d.items, cnt = (k) => all.filter((i) => inCat(i, k, rare));
+    const near = cnt("near"), alpha = cnt("alpha"), off = cnt("off"), unb = cnt("unbound"), rr = cnt("rare");
+    const fam = Object.entries(off.reduce((m, i) => ((m[i.family] = (m[i.family] || 0) + 1), m), {})).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, n]) => `${f} ${n}`).join(", ");
+    const goCat = (cat) => () => { sh.cat = cat; sh.family = ""; sh.q = ""; save(); route(); };
+    summary(el, {
+      tiles: [
+        { t: "Colors from the system", v: pct(OT().bound_pct), sub: "of color uses go through a token or style", key: "bound_pct", pct: true },
+        { t: "Stray colors", v: d.tokens ? num(near.length + alpha.length + off.length) : "—", sub: d.tokens ? `near ${num(near.length)} · opacity ${num(alpha.length)} · off ${num(off.length)}` : "a token library is required", key: "stray" },
+        { t: "Set by hand", v: pct(OT().raw_pct), sub: "of color uses have no token or style", key: "raw_pct", pct: true },
+        { t: "Colors in use", v: num(all.length), sub: pl(usesOf(all), "use") },
+      ],
+      recs: d.tokens ? [
+        { n: unb.length, title: `Bind variables to ${pl(unb.length, "color")}`, text: `They already equal a token but are set by hand in ${num(unb.reduce((n, i) => n + i.raw, 0))} places. Nothing changes visually.`, go: goCat("unbound") },
+        { n: near.length, title: `Replace ${pl(near.length, "near-token color")}`, text: `They look the same as a token (${pl(usesOf(near), "use")}). Swap them for the closest token.`, go: goCat("near") },
+        { n: alpha.length, title: `Resolve ${pl(alpha.length, "opacity mismatch", "opacity mismatches")}`, text: `A token’s color with another opacity (${pl(usesOf(alpha), "use")}). Add tokens with these opacities or use existing ones.`, go: goCat("alpha") },
+        { n: off.length, title: `Review ${pl(off.length, "off-system color")}`, text: `Far from every token${fam ? `, mostly ${fam}` : ""}. Add the needed ones to the system and replace the rest.`, go: goCat("off") },
+        { n: rr.length, title: `Check ${pl(rr.length, "rare color")}`, text: `Used ${rare === 2 ? "once or twice" : `at most ${rare} times`}. Often a typo or a leftover.`, go: goCat("rare") },
+      ] : [{ always: true, title: "Load the token library", text: "Without it coloro cannot tell which colors are outside the design system.", go: openSettings, label: "Open settings" }],
+      file: d.tokens ? { key: "stray", title: "stray colors" } : { key: "raw_pct", title: "set by hand", pct: true },
+      history: ["bound_pct", "stray", "raw_pct"],
+    });
+  }
   const ct = $("#cTok");
   if (ct) ct.onclick = openSettings;
   rowsWithPlaces($("#list"), items, (i, n) => `<div class="crow" data-n="${n}">${swatch(i.color, i.alpha)}
@@ -957,6 +966,17 @@ async function viewGradients(el, stale) {
     <div class="field"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Stop color hex"></div>`,
   (root) => { bindShow(root, "gradients", () => route()); bindColorViews(root); });
   el.innerHTML = `<div class="head"><div class="grow"><h1>Gradients</h1><p class="sub">Each recipe (type and stops in order) is one row. ${pl(items.length, "gradient")} · ${pl(items.reduce((n, g) => n + g.uses, 0), "use")}</p></div></div><div class="list" id="list"></div>`;
+  {
+    const raw = d.items.filter((g) => g.raw > 0), once = d.items.filter((g) => g.uses === 1);
+    summary(el, {
+      tiles: [{ t: "Gradient recipes", v: num(d.items.length) }, { t: "Uses", v: num(usesOf(d.items)) },
+        { t: "Set by hand", v: num(raw.length), sub: "recipes without a style or variable" }],
+      recs: [
+        { n: raw.length, title: `Turn ${pl(raw.length, "gradient")} into styles`, text: "They are set by hand. A gradient style keeps every use identical.", go: () => { S.show.gradients.sort = "uses"; save(); route(); } },
+        { n: once.length, title: `Check ${pl(once.length, "gradient")} used once`, text: "One-off recipes are often variations of an existing gradient.", go: () => { S.show.gradients.sort = "uses"; save(); route(); } },
+      ],
+    });
+  }
   const css = (g) => `${g.kind === "radial" || g.kind === "diamond" ? "radial-gradient(circle" : g.kind === "angular" ? "conic-gradient(from 0deg" : "linear-gradient(90deg"},${g.stops.map((s) => colorCss("#" + s.color + Math.round(s.alpha * 2.55).toString(16).padStart(2, "0"))).join(",")})`;
   rowsWithPlaces($("#list"), items, (g, n) => `<div class="crow" data-n="${n}"><span class="sample chk"><i style="background:${css(g)}"></i></span>
       <div class="name">${esc(g.kind[0].toUpperCase() + g.kind.slice(1))} · ${pl(g.stops.length, "stop")}<small class="stops">${g.stops.map((s) => `<code>#${esc(s.color)}${s.alpha < 100 ? " " + s.alpha + "%" : ""}</code>`).join("")}</small></div>
@@ -985,6 +1005,17 @@ async function viewTokens(el, stale) {
     <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Token name or hex"></div>`,
   (root) => { bindShow(root, "tokens", () => route()); bindColorViews(root); });
   el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens</h1><p class="sub">The token library against the files. Uses count every color equal to the token value: Figma reports which variable a color is bound to only on the Enterprise plan. Unused tokens may be obsolete.</p></div></div><div class="list" id="list"></div>`;
+  {
+    const unused = d.items.filter((t) => !t.uses), byHand = d.items.filter((t) => t.raw > 0);
+    summary(el, {
+      tiles: [{ t: "Tokens in the library", v: num(d.items.length) }, { t: "Used", v: num(d.items.length - unused.length) },
+        { t: "Unused", v: num(unused.length) }, { t: "Set by hand somewhere", v: num(byHand.length) }],
+      recs: [
+        { n: byHand.length, title: `Bind ${pl(byHand.length, "token")} where they are set by hand`, text: "Their values are typed in manually in some places.", go: () => { sh.cat = "used"; save(); route(); } },
+        { n: unused.length, title: `Review ${pl(unused.length, "unused token")}`, text: "No color in the selected files equals these tokens. They may be obsolete, or the files are out of sync with the system.", go: () => { sh.cat = "unused"; save(); route(); } },
+      ],
+    });
+  }
   rowsWithPlaces($("#list"), items, (t, n) => `<div class="crow" data-n="${n}">${swatch(t.color, t.alpha)}
       <div class="name">${esc(t.name)}<small class="mono">#${esc(t.color)}${t.alpha < 100 ? " · " + t.alpha + "%" : ""}${t.shared ? " · same value as another token" : ""}</small></div>
       ${counts({ uses: t.uses, screens: t.screens, files: t.files, unit: "use" })}
@@ -1026,6 +1057,23 @@ async function viewTypography(el, stale) {
     <div class="list" id="list"></div>
     <h2>Text styles in the system</h2><p class="sub">The most common font combination of each style.</p>
     <div class="styles">${d.styles.map((s) => `<div class="srow">${fontSample(s.font)}<div class="name">${esc(s.name)}<small>${esc(s.label)}</small></div><div class="num">${num(s.uses)}</div></div>`).join("")}</div>`;
+  {
+    const of = (k) => d.items.filter((i) => i.status === k);
+    const missing = Object.entries(of("off").filter((i) => !i.family_known).reduce((m, i) => ((m[i.font.family] = (m[i.font.family] || 0) + i.uses), m), {})).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, n]) => `${f} ${num(n)}`).join(", ");
+    const goCat = (cat) => () => { sh.cat = cat; save(); route(); };
+    summary(el, {
+      tiles: [{ t: "Unstyled text", v: pct(OT().text_nostyle_pct), sub: "of text placed by hand", key: "text_nostyle_pct", pct: true },
+        { t: "Texts without a style", v: num(sum("all")) }, { t: "Text styles in the system", v: num(d.styles.length) },
+        { t: "Off-system combinations", v: num(of("off").length) }],
+      recs: [
+        { n: sum("unbound"), title: `Apply styles to ${pl(sum("unbound"), "text")}`, text: "Font, size and line height already match a style exactly. Nothing changes visually.", go: goCat("unbound") },
+        { n: sum("near"), title: `Replace ${pl(sum("near"), "text")} with the closest style`, text: "Same font and weight, size or line height differ by about a pixel. Often scaled text.", go: goCat("near") },
+        { n: sum("off"), title: `Review ${pl(sum("off"), "text")} off the system`, text: missing ? `Fonts not in the system: ${missing}.` : "Font weights or sizes that no style uses.", go: goCat("off") },
+      ],
+      file: { key: "text_nostyle_pct", title: "unstyled text", pct: true },
+      history: ["text_nostyle_pct"],
+    });
+  }
   rowsWithPlaces($("#list"), items, (i, n) => `<div class="crow" data-n="${n}">${fontSample(i.font)}
       <div class="name">${esc(i.label)}<small>${esc(i.font.family)}${i.first_seen ? " · since " + esc(day(i.first_seen)) : ""}</small></div>
       ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "text" })}
@@ -1061,6 +1109,18 @@ async function viewText(el, stale) {
   el.innerHTML = `<div class="head"><div class="grow"><h1>Text · ${esc(XCATS.find(([k]) => k === sh.cat)[1])}</h1>
     <p class="sub">${esc(XHINT[sh.cat])} ${pl(d.matched, "text")}${d.matched > items.length ? `, the first ${num(items.length)} shown` : ""}. Texts are equal when they match ignoring case, ё and spaces.</p></div></div>
     <div class="list" id="list"></div>`;
+  {
+    const c = d.counts, goCat = (cat) => () => { sh.cat = cat; save(); route(); };
+    summary(el, {
+      tiles: [{ t: "Texts", v: num(c.all), sub: pl(d.total_uses, "place") }, { t: "Repeated", v: num(c.repeated) },
+        { t: "Written differently", v: num(c.variants) }, { t: "Without a style", v: num(c.unstyled) }],
+      recs: [
+        { n: c.variants, title: `Unify ${pl(c.variants, "text")} written in different ways`, text: "The same words with different capitalization or spacing, such as “Buy now” and “Buy Now”.", go: goCat("variants") },
+        { n: c.unstyled, title: `Apply text styles to ${pl(c.unstyled, "text")}`, text: "Placed by hand without a text style in at least one place.", go: goCat("unstyled") },
+        { n: c.repeated, title: `Keep ${pl(c.repeated, "repeated text")} in one place`, text: "Texts used on many screens are easier to keep consistent in a copy deck or a component.", go: goCat("repeated") },
+      ],
+    });
+  }
   rowsWithPlaces($("#list"), items, (i, n) => `<div class="crow" data-n="${n}"><span class="sample fsample">Aa</span>
       <div class="name" title="${esc(i.text)}">${esc(i.text)}<small>${i.variants > 1 ? `${pl(i.variants, "spelling")} · ` : ""}${i.in_instances ? `${num(i.in_instances)} inside instances · ` : ""}${i.first_seen ? "since " + esc(day(i.first_seen)) : ""}</small></div>
       ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "place" })}
@@ -1099,6 +1159,25 @@ async function viewSpacing(el, stale) {
   el.innerHTML = `<div class="head"><div class="grow"><h1>${esc(SGROUPS.find(([k]) => k === sh.group)[1])} · ${esc(cats.find(([k]) => k === sh.cat)[1])}</h1>
     <p class="sub">${scaleLine} Bound: ${num(tt.bound)}. Set by hand: ${num(tt.ok + tt.unbound + tt.near + tt.off)}.${tt.pill ? ` Pills (radius of half the side): ${num(tt.pill)}.` : ""} Only layers placed by hand are counted.</p></div></div>
     <div class="list" id="list"></div>`;
+  {
+    const G = { spacing: "spacing", radius: "radius", stroke: "stroke" };
+    const tot = (k) => Object.values(all).reduce((n, x) => n + x.totals[k], 0);
+    const recs = [];
+    for (const [grp, gd] of Object.entries(all)) {
+      const go = (cat) => () => { sh.group = grp; sh.cat = cat; save(); route(); };
+      const nearEx = gd.items.find((i) => i.status === "near");
+      recs.push({ n: gd.totals.near, title: `Round ${pl(gd.totals.near, G[grp] + " value")} to the scale`, text: nearEx ? `Within a pixel of the scale, for example ${nearEx.value} → ${nearEx.nearest}.` : "Within a pixel of the scale.", go: go("near") });
+      recs.push({ n: gd.totals.off, title: `Review ${pl(gd.totals.off, G[grp] + " value")} off the scale`, text: "No such value in the scale. Replace with the closest value or add it to the scale.", go: go("off") });
+      if (gd.source === "variables") recs.push({ n: gd.totals.unbound, title: `Bind variables to ${pl(gd.totals.unbound, G[grp] + " value")}`, text: "On the scale but typed as numbers.", go: go("unbound") });
+      else if (gd.items.length) recs.push({ always: true, n: null, title: `No ${G[grp]} variables`, text: `${G[grp][0].toUpperCase() + G[grp].slice(1)} values are compared with a standard grid. Variables for the scale make the check exact.`, go: go("all"), label: "Show values" });
+    }
+    recs.sort((a, b) => (b.n || 0) - (a.n || 0));
+    summary(el, {
+      tiles: [{ t: "Off-scale", v: pct(OT().scale_off_pct), sub: "of spacing, radius and stroke values", key: "scale_off_pct", pct: true },
+        { t: "Near the scale", v: num(tot("near")) }, { t: "Off the scale", v: num(tot("off")) }, { t: "Bound to variables", v: num(tot("bound")) }],
+      recs, file: { key: "scale_off_pct", title: "off-scale values", pct: true }, history: ["scale_off_pct"],
+    });
+  }
   rowsWithPlaces($("#list"), items, (i, n) => `<div class="crow" data-n="${n}">${scaleSample(sh.group, i.value)}
       <div class="name">${i.value} px<small>${esc(Object.entries(i.kinds).map(([k, c]) => `${KIND[k] || k} ${num(c)}`).join(" · "))}${i.first_seen ? " · since " + esc(day(i.first_seen)) : ""}</small></div>
       ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "use" })}
@@ -1128,6 +1207,17 @@ async function viewEffects(el, stale) {
   el.innerHTML = `<div class="head"><div class="grow"><h1>Effects · ${esc(ECATS.find(([k]) => k === sh.cat)[1])}</h1><p class="sub">Shadows and blurs set by hand, compared with effect styles inferred from the files. With a style: ${num(d.totals.styled)}. Only layers placed by hand are counted.</p></div></div>
     <div class="list" id="list"></div>
     ${d.styles.length ? `<h2>Effects in styles</h2><div class="styles">${d.styles.map((s) => `<div class="srow">${effectSample(s)}<div class="name">${esc(s.styles.join(", "))}<small>${esc(s.label)}${s.color ? " · #" + esc(s.color) : ""}</small></div><div class="num">${num(s.uses)}</div></div>`).join("")}</div>` : ""}`;
+  {
+    const goCat = (cat) => () => { sh.cat = cat; save(); route(); };
+    summary(el, {
+      tiles: [{ t: "With a style", v: num(d.totals.styled) }, { t: "Set by hand", v: num(sum("all")) }, { t: "Effect styles", v: num(d.styles.length) }],
+      recs: [
+        { n: sum("unbound"), title: `Apply effect styles to ${pl(sum("unbound"), "layer")}`, text: "The shadow or blur already matches a style exactly.", go: goCat("unbound") },
+        { n: sum("near"), title: `Replace ${pl(sum("near"), "effect")} with the closest style`, text: "Offset or blur differ by a pixel or two.", go: goCat("near") },
+        { n: sum("off"), title: `Review ${pl(sum("off"), "effect")} off the system`, text: "No style has this effect. Add a style or use an existing one.", go: goCat("off") },
+      ],
+    });
+  }
   rowsWithPlaces($("#list"), items, (i, n) => `<div class="crow" data-n="${n}">${effectSample(i)}
       <div class="name">${esc(i.label)}<small>${[i.color ? `<span class="mono">#${esc(i.color)}${i.alpha != null && i.alpha < 100 ? " " + i.alpha + "%" : ""}</span>` : "", i.first_seen ? "since " + esc(day(i.first_seen)) : ""].filter(Boolean).join(" · ")}</small></div>
       ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "layer" })}
@@ -1149,6 +1239,16 @@ async function viewImages(el, stale) {
   drawShow(`<div class="sec">Show</div>${chips(cats, sh.cat)}`, (root) => bindShow(root, "images", () => route()));
   el.innerHTML = `<div class="head"><div class="grow"><h1>Images</h1><p class="sub">${pl(d.total, "image")} in ${pl(d.total_uses, "place")}; ${num(d.once)} used once. One image in several places is one row, so repeats and leftover placeholders stand out.${d.total > d.items.length ? ` Showing the ${num(d.items.length)} most used.` : ""}</p></div></div>
     <div class="list" id="list"></div>`;
+  {
+    const heavy = { length: d.heavy };
+    summary(el, {
+      tiles: [{ t: "Images", v: num(d.total) }, { t: "Places", v: num(d.total_uses) }, { t: "Used once", v: num(d.once) }],
+      recs: [
+        { n: heavy.length, title: `Make ${pl(heavy.length, "image")} reusable`, text: "Each is placed 20 or more times. A component or a shared asset keeps every copy in sync.", go: () => { sh.cat = "repeated"; save(); route(); } },
+        { n: d.once, title: `Check ${pl(d.once, "image")} used once`, text: "One-off images are often placeholders or leftovers.", go: () => { sh.cat = "once"; save(); route(); } },
+      ],
+    });
+  }
   rowsWithPlaces($("#list"), items, (i, n) => `<div class="crow" data-n="${n}"><span class="sample thumb" data-ref="${esc(i.ref)}" data-file="${esc(i.file_key)}"></span>
       <div class="name">${esc(i.name)}<small>${i.modes.map((m) => MODES[m] || m.toLowerCase()).join(", ")} · up to ${num(i.max_w)} × ${num(i.max_h)}${i.first_seen ? " · since " + esc(day(i.first_seen)) : ""}</small></div>
       ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "place" })}
@@ -1166,6 +1266,22 @@ async function viewImages(el, stale) {
 }
 
 /* ───────────────────── components ───────────────────── */
+
+function componentsSummary(el, c, det, over) {
+  const sh = S.show.components, inst = c.items.reduce((n, g) => n + g.instances, 0);
+  const heavy = c.items.filter((g) => g.instances >= 10 && g.overridden / g.instances > 0.5);
+  summary(el, {
+    tiles: [{ t: "Sets and components", v: num(c.total) }, { t: "Instances", v: num(inst) },
+      { t: "Overridden", v: pct(inst ? (c.items.reduce((n, g) => n + g.overridden, 0) * 100) / inst : 0), sub: "of instances" },
+      { t: "Unnamed layers", v: num(OT().generic), sub: "frames and groups like Frame 12", key: "generic" }],
+    recs: [
+      { n: det.total, title: `Check ${pl(det.total, "possibly detached copy", "possibly detached copies")}`, text: "Frames named like a component but not instances. Re-link them so library updates reach them.", go: () => { sh.cat = "detached"; save(); route(); } },
+      { n: heavy.length, title: `Consider variants for ${pl(heavy.length, "component")}`, text: "More than half of their instances are overridden. A missing variant is often the reason.", go: () => { sh.cat = "overridden"; save(); route(); } },
+      { n: OT().generic || 0, title: `Rename ${pl(OT().generic || 0, "layer")} with default names`, text: "Frame 12 or Group 7 placed by hand. Clear names help developers and search." },
+    ],
+    file: { key: "generic", title: "unnamed layers" }, history: ["generic"],
+  });
+}
 
 async function viewComponents(el, stale) {
   const sh = S.show.components;
@@ -1186,11 +1302,13 @@ async function viewComponents(el, stale) {
   if (sh.cat === "detached") {
     el.innerHTML = `<div class="head"><div class="grow"><h1>Possibly detached</h1><p class="sub">Frames and groups named like a component of the file but not instances. A detached instance keeps the component name. This is a hint, not a verdict: a regular frame can have the same name.${det.capped ? ` Showing the first ${num(det.total)}.` : ""}</p></div></div>
       <div class="list">${det.items.length ? det.items.map((d) => `<div class="place"><span class="p">${esc(d.file)} <span class="muted">›</span> ${esc(d.page)} <span class="muted">›</span> ${esc(d.screen)} <span class="muted">›</span> <code>${esc(d.name)}</code></span><a href="${esc(d.link)}" target="_blank" rel="noopener">Open ↗</a></div>`).join("") : '<div class="empty"><b>Nothing found</b>No frames look like detached instances.</div>'}</div>`;
+    componentsSummary(el, c, det, over);
     return;
   }
   const items = sh.cat === "overridden" ? over.slice().sort((a, b) => b.overridden - a.overridden) : c.items;
   el.innerHTML = `<div class="head"><div class="grow"><h1>${sh.cat === "overridden" ? "Overridden instances" : "Components in use"}</h1><p class="sub">${pl(c.total, "set or component", "sets and components")} · ${pl(inst, "instance")}. Open a row to filter by variant properties and see where they are used.</p></div></div>
     <div class="list" id="list"></div>`;
+  componentsSummary(el, c, det, over);
   const thumb = (g) => (sh.previews && g.preview ? `<span class="sample kthumb" data-pf="${esc(g.preview[0])}" data-pn="${esc(g.preview[1])}"></span>`
     : '<span class="sample"><svg class="i" viewBox="0 0 16 16"><path d="M8 2 11 5 8 8 5 5zM8 8l3 3-3 3-3-3z"/></svg></span>');
   rowsWithPlaces($("#list"), items, (g, n) => `<div class="crow" data-n="${n}">${thumb(g)}
@@ -1596,7 +1714,7 @@ $("#veil").onclick = (e) => { if (e.target.id === "veil") closeDialog(); };
 
 /* ───────────────────── start ───────────────────── */
 
-const VIEWS = { overview: viewOverview, colors: viewColors, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
+const VIEWS = { colors: viewColors, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
   images: viewImages, components: viewComponents, search: viewSearch };
 
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });

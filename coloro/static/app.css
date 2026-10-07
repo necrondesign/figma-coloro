@@ -93,7 +93,7 @@ select.in{padding:6px 8px}
 .fmenu{position:absolute;right:6px;top:100%;z-index:6;width:220px}
 
 /* right: content types as a row of icons */
-.types{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;padding:0 14px 2px}
+.types{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;padding:0 14px 2px}
 .tbtn{position:relative;height:36px;border:0;border-radius:var(--r-sm);background:none;color:var(--label);cursor:pointer;display:grid;place-items:center}
 .tbtn:hover{background:var(--btn);color:var(--txt)}
 .tbtn.on{background:var(--btn);color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent)}
@@ -239,6 +239,22 @@ button.tile{cursor:pointer} button.tile:hover{background:var(--btn)}
 .sample.waiting{animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.45}}
 .kswitch{margin:4px 0 6px}
+.summary{background:var(--panel);border-radius:var(--r);margin-bottom:18px}
+.sumhead{width:100%;display:flex;align-items:center;gap:8px;border:0;background:none;padding:10px 14px;cursor:pointer;text-align:left;font-weight:600;font-size:12px;color:var(--txt)}
+.summary.closed .sumbody{display:none}
+.summary.closed .sumhead svg{transform:rotate(-90deg)}
+.sumbody{padding:0 14px 14px}
+.sumbody .tile{background:var(--btn)}
+.sumbody h3{margin:16px 0 8px;color:var(--label);font-weight:500}
+.recs{display:flex;flex-direction:column;gap:4px}
+.rec{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 10px;background:var(--btn);border-radius:var(--r-sm)}
+.rec .rn{font-size:15px;font-weight:600;text-align:right}
+.rec .rt b{display:block;font-weight:500} .rec .rt span{color:var(--label)}
+.sfiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px}
+.sfile{display:flex;align-items:center;gap:8px;border:0;background:var(--btn);border-radius:var(--r-sm);padding:6px 8px;cursor:pointer;text-align:left;color:inherit}
+.sfile:hover{background:var(--btn-hover)}
+.sfile span.grow{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lv{padding:1px 6px;border-radius:4px;font-size:11px}
 .kinsp{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:12px;margin:4px 0 12px}
 .kcanvas{background:repeating-conic-gradient(var(--btn) 0 25%,var(--panel) 0 50%) 0 0/14px 14px;border-radius:var(--r);min-height:200px;
   display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px;position:relative}

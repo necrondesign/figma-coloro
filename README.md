@@ -16,7 +16,12 @@ limited to some pages), what to look at and what to include on the right, result
 the middle. The panels collapse into buttons that keep showing progress and errors; on a narrow
 screen they open as dropdowns.
 
-**The overall picture.** The main screen: how much colour goes through tokens and styles, how
+**A summary in every section.** Colors, typography, text, spacing, effects, images and components
+each start with their own summary: key numbers with changes since the last update, recommendations
+in order of impact with a button that shows those places, the files where it is worst, and a
+"how it changed" chart.
+
+**The overall picture in the report.** The main screen: how much colour goes through tokens and styles, how
 many stray colours, texts without a style, spacing off the scale, unnamed frames. Below it, a
 files × problems map: worst files first, each cell coloured good, needs work or bad. Click a
 cell to see the places. Arrows and a "how it changed" chart show whether things got better.
