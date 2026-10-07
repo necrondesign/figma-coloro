@@ -178,7 +178,7 @@ def _overview(con, filt: Filter, idx: Index) -> dict:
     totals = _metrics(all_c, all_n, idx)
     totals["bound_pct"] = None if not totals["uses"] else round(100 - (totals["raw_pct"] or 0), 1)
 
-    return {"filter": filt.to_dict(), "tokens": bool(idx), "totals": totals, "files": rows, "levels": LEVELS}
+    return {"filter": filt.to_dict(), "tokens": bool(idx), "library": idx.source, "totals": totals, "files": rows, "levels": LEVELS}
 
 
 # ---------------------------------------------------------------- история

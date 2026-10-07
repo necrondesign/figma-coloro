@@ -212,6 +212,21 @@ class Projects(unittest.TestCase):
         server.remove_project(self.con, b)
         self.assertIsNone(self.con.execute("SELECT 1 FROM nodes WHERE file_key = 'KA'").fetchone())
 
+    def test_system_from_files_without_library(self):
+        # Справочника нет: системой считаются цвета, заданные в файлах через стиль или переменную.
+        a = server.create_project(self.con, "App")["id"]
+        server.add_source(self.con, "https://www.figma.com/design/KA/x", None, a)
+        bound = solid(1, 0, 111 / 255, boundVariables={"color": {"id": "V"}})
+        load_file(self.con, FakeFigma([page("1:1", "Stage", [node("s", "FRAME", children=[
+            node("a", fills=[bound]), node("b", fills=[solid(1, 0, 112 / 255)]), node("c", fills=[solid(0, 0.5, 0)])])])]), "KA")
+        idx = tokens.load(self.con, a)
+        self.assertEqual(idx.source, "files")
+        st = {i["color"]: i["status"] for i in inventory.colours(self.con, Filter(project=a), idx)}
+        self.assertEqual(st, {"FF006F": "token", "FF0070": "near", "008000": "off"})
+        # Как только справочник загружен, он главнее.
+        tokens.store(self.con, tokens.parse("name,value\nbrand/green,#008000\n"), "kit.csv", a)
+        self.assertEqual(tokens.load(self.con, a).source, "library")
+
     def test_token_library_per_project(self):
         a = server.create_project(self.con, "App")["id"]
         b = server.create_project(self.con, "Site")["id"]

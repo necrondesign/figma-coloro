@@ -197,7 +197,10 @@ def store(con, rows: list[tuple], filename: str, project: int | None = None) -> 
 class Index:
     """Справочник в памяти: поиск по точному значению и ближайшего по виду."""
 
-    def __init__(self, rows: list[tuple]):
+    def __init__(self, rows: list[tuple], source: str = "library"):
+        # source: «library» — загруженный справочник; «files» — выведен из стилей и переменных
+        # самих макетов, когда справочника нет.
+        self.source = source
         self.by_value: dict[tuple[str, int], list[str]] = {}
         self.items: list[tuple[str, str, int, tuple]] = []
         for name, c, a, _mode, _coll in rows:
@@ -209,7 +212,7 @@ class Index:
         # Статус цвета зависит только от цвета и справочника — запоминаем: на тысячах цветов
         # сравнение с каждым токеном по CIEDE2000 занимает секунды.
         self.classified: dict[tuple[str, int], dict] = {}
-        self.sig = hash(tuple(rows))       # подпись справочника — для памяти результатов
+        self.sig = hash((source, tuple(rows)))   # подпись справочника — для памяти результатов
 
     def __bool__(self) -> bool:
         return bool(self.items)
@@ -253,16 +256,40 @@ _LOADED: dict[tuple, Index] = {}
 
 
 def load(con, project: int | None = None) -> Index:
-    """Справочник проекта. Пока он не менялся, отдаётся тот же объект — с запомненными статусами."""
+    """Справочник проекта. Пока он не менялся, отдаётся тот же объект — с запомненными статусами.
+
+    Если справочник проекту не загружен, система выводится из самих макетов: цвета, которые
+    где-то в файлах проекта привязаны к стилю или переменной (см. from_files)."""
     rows = con.execute("SELECT name, color, alpha, mode, collection FROM tokens WHERE project_id IS ?"
                        " ORDER BY 1, 2, 3, 4, 5", (project,)).fetchall()
-    key = (project, tuple(rows))
+    source = "library"
+    if not rows and project is not None:
+        from . import memo
+        rows = memo.cached(con, "tokens-from-files", [project], lambda: from_files(con, project))
+        source = "files"
+    key = (project, source, tuple(rows))
     got = _LOADED.get(key)
     if got is None:
         if len(_LOADED) > 16:
             _LOADED.clear()
-        got = _LOADED[key] = Index(rows)
+        got = _LOADED[key] = Index(rows, source)
     return got
+
+
+def from_files(con, project: int) -> list[tuple]:
+    """Система цветов из макетов: каждый сплошной цвет, который хоть где-то в файлах проекта
+    задан через стиль или переменную. Имя — имя стиля; у переменной — «Variable», потому что
+    имена переменных Figma через API отдаёт только на тарифе Enterprise."""
+    rows = con.execute(
+        "SELECT p.src, p.color, p.alpha, COUNT(*) FROM paints p"
+        " WHERE p.kind = 'solid' AND p.src IS NOT NULL"
+        " AND p.file_key IN (SELECT file_key FROM sources WHERE project_id = ?)"
+        " GROUP BY p.src, p.color, p.alpha", (project,)).fetchall()
+    out = set()
+    for src, c, a, _n in rows:
+        name = src[2:] if src.startswith("s:") else "Variable"
+        out.add((name, c, a, None, "From files"))
+    return sorted(out)
 
 
 def usage(idx: Index, colours: list[dict]) -> list[dict]:

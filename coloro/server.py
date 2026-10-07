@@ -416,13 +416,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/colours":
             items = remember("colours", lambda: inventory.colours(con, filt, idx))
             st = inventory.stray(items)
-            return self._json({"tokens": bool(idx), "items": items,
+            return self._json({"tokens": bool(idx), "library": idx.source, "system": len(idx.items), "items": items,
                                "counts": {k: len(v) for k, v in st.items()}})
         if path == "/api/gradients":
             return self._json({"items": remember("gradients", lambda: inventory.gradients(con, filt))})
         if path == "/api/tokens/usage":
             items = remember("colours", lambda: inventory.colours(con, filt, idx))
-            return self._json({"items": tokens.usage(idx, items)})
+            return self._json({"items": tokens.usage(idx, items), "library": idx.source})
         limit = max(1, min(5000, int(flat.get("limit") or 60)))
         if path in ("/api/places", "/api/screens"):
             c = flat.get("color", "").upper()

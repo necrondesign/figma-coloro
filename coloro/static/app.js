@@ -927,7 +927,8 @@ async function viewColors(el, stale) {
   });
   el.innerHTML = `<div class="head"><div class="grow"><h1>${esc(CCATS.find(([k]) => k === sh.cat)[1])}${sh.family ? " · " + esc(sh.family) : ""}</h1>
       <p class="sub">${esc(CHINT[sh.cat])} ${pl(items.length, "color")} · ${pl(items.reduce((n, i) => n + i.uses, 0), "use")}</p></div></div>
-    ${d.tokens ? "" : `<div class="notice">No token library for this project, so colors cannot be compared with tokens. <a id="cTok">Open settings</a></div>`}
+    ${!d.tokens ? `<div class="notice">No token library and no colors from styles or variables in these files, so there is nothing to compare with. <a id="cTok">Load a token library</a></div>`
+      : d.library === "files" ? `<div class="notice">No token library is loaded, so the system is taken from the files: ${pl(d.system, "color")} used through styles and variables. Style names are shown; variable names need a token library. <a id="cTok">Load a token library</a></div>` : ""}
     <div class="list" id="list"></div>`;
   {
     const all = d.items, cnt = (k) => all.filter((i) => inCat(i, k, rare));
@@ -947,6 +948,7 @@ async function viewColors(el, stale) {
         { n: alpha.length, title: `Resolve ${pl(alpha.length, "opacity mismatch", "opacity mismatches")}`, text: `A token’s color with another opacity (${pl(usesOf(alpha), "use")}). Add tokens with these opacities or use existing ones.`, go: goCat("alpha") },
         { n: off.length, title: `Review ${pl(off.length, "off-system color")}`, text: `Far from every token${fam ? `, mostly ${fam}` : ""}. Add the needed ones to the system and replace the rest.`, go: goCat("off") },
         { n: rr.length, title: `Check ${pl(rr.length, "rare color")}`, text: `Used ${rare === 2 ? "once or twice" : `at most ${rare} times`}. Often a typo or a leftover.`, go: goCat("rare") },
+        ...(d.library === "files" ? [{ always: true, title: "Load the token library for exact names", text: "The system is now taken from styles and variables in the files. A library adds variable names and catches tokens nobody uses yet.", go: openSettings, label: "Open settings" }] : []),
       ] : [{ always: true, title: "Load the token library", text: "Without it coloro cannot tell which colors are outside the design system.", go: openSettings, label: "Open settings" }],
       file: d.tokens ? { key: "stray", title: "stray colors" } : { key: "raw_pct", title: "set by hand", pct: true },
       history: ["bound_pct", "stray", "raw_pct"],
@@ -1013,7 +1015,9 @@ async function viewTokens(el, stale) {
   drawShow(`${colorViews()}<div class="sec">Usage</div>${chips(cats.map(([k, t]) => [k, t, base.filter((x) => inT(x, k)).length]), sh.cat)}
     <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Token name or hex"></div>`,
   (root) => { bindShow(root, "tokens", () => route()); bindColorViews(root); });
-  el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens</h1><p class="sub">The token library against the files. Uses count every color equal to the token value: Figma reports which variable a color is bound to only on the Enterprise plan. Unused tokens may be obsolete.</p></div></div><div class="list" id="list"></div>`;
+  el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens</h1><p class="sub">${d.library === "files"
+      ? "No token library is loaded, so this is the system taken from the files: every color used through a style or a variable. Style names are shown; variable names need a token library."
+      : "The token library against the files. Uses count every color equal to the token value: Figma reports which variable a color is bound to only on the Enterprise plan. Unused tokens may be obsolete."}</p></div></div><div class="list" id="list"></div>`;
   {
     const unused = d.items.filter((t) => !t.uses), byHand = d.items.filter((t) => t.raw > 0);
     summary(el, {
