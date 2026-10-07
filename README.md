@@ -52,7 +52,8 @@ bound to variables, or a conventional grid when there are none (spacing in steps
 **Images.** One row per image across all places, with a thumbnail: repeats and placeholders.
 
 **Components.** Where they are used, which variants, how many are overridden, which frames
-look like detached copies.
+look like detached copies. Optional previews: Figma draws each variant, and the properties
+(Size, State…) switch like in Figma, with a large preview of the chosen variant and where it is used.
 
 **A one-file report.** An HTML page with no external files: send it, attach it, print it.
 

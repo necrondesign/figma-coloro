@@ -75,7 +75,7 @@ const DEFAULT_SHOW = {
   spacing: { group: "spacing", cat: "near" },
   effects: { cat: "unbound" },
   images: { cat: "repeated" },
-  components: { cat: "all", q: "" },
+  components: { cat: "all", q: "", previews: true },
   text: { cat: "all", q: "", mode: "forms", sort: "uses" },
 };
 const S = {
@@ -1176,8 +1176,13 @@ async function viewComponents(el, stale) {
   const cats = [["all", "All", c.items.length], ["overridden", "Overridden", over.length], ["detached", "Possibly detached", det.total]];
   $("#tname").innerHTML = `Components<span>${pl(inst, "instance")}</span>`;
   drawShow(`<div class="sec">Show</div>${chips(cats, sh.cat)}
-    <div class="field" style="margin-top:6px"><span class="label">Component or set name</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="All components"></div>`,
-  (root) => bindShow(root, "components", () => route()));
+    <div class="field" style="margin-top:6px"><span class="label">Component or set name</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="All components"></div>
+    <div class="tg" data-prev><span>Show previews</span><span class="sw ${sh.previews ? "on" : ""}" role="switch" aria-checked="${sh.previews}"></span></div>
+    <p class="label" style="padding:0 6px;margin:0">Figma draws each variant. The first time takes a few seconds.</p>`,
+  (root) => {
+    bindShow(root, "components", () => route());
+    root.querySelector("[data-prev]").onclick = () => { sh.previews = !sh.previews; save(); route(); };
+  });
   if (sh.cat === "detached") {
     el.innerHTML = `<div class="head"><div class="grow"><h1>Possibly detached</h1><p class="sub">Frames and groups named like a component of the file but not instances. A detached instance keeps the component name. This is a hint, not a verdict: a regular frame can have the same name.${det.capped ? ` Showing the first ${num(det.total)}.` : ""}</p></div></div>
       <div class="list">${det.items.length ? det.items.map((d) => `<div class="place"><span class="p">${esc(d.file)} <span class="muted">›</span> ${esc(d.page)} <span class="muted">›</span> ${esc(d.screen)} <span class="muted">›</span> <code>${esc(d.name)}</code></span><a href="${esc(d.link)}" target="_blank" rel="noopener">Open ↗</a></div>`).join("") : '<div class="empty"><b>Nothing found</b>No frames look like detached instances.</div>'}</div>`;
@@ -1186,14 +1191,50 @@ async function viewComponents(el, stale) {
   const items = sh.cat === "overridden" ? over.slice().sort((a, b) => b.overridden - a.overridden) : c.items;
   el.innerHTML = `<div class="head"><div class="grow"><h1>${sh.cat === "overridden" ? "Overridden instances" : "Components in use"}</h1><p class="sub">${pl(c.total, "set or component", "sets and components")} · ${pl(inst, "instance")}. Open a row to filter by variant properties and see where they are used.</p></div></div>
     <div class="list" id="list"></div>`;
-  rowsWithPlaces($("#list"), items, (g, n) => `<div class="crow" data-n="${n}"><span class="sample"><svg class="i" viewBox="0 0 16 16"><path d="M8 2 11 5 8 8 5 5zM8 8l3 3-3 3-3-3z"/></svg></span>
+  const thumb = (g) => (sh.previews && g.preview ? `<span class="sample kthumb" data-pf="${esc(g.preview[0])}" data-pn="${esc(g.preview[1])}"></span>`
+    : '<span class="sample"><svg class="i" viewBox="0 0 16 16"><path d="M8 2 11 5 8 8 5 5zM8 8l3 3-3 3-3-3z"/></svg></span>');
+  rowsWithPlaces($("#list"), items, (g, n) => `<div class="crow" data-n="${n}">${thumb(g)}
       <div class="name">${esc(g.title)}<small>${g.remote ? "Library" : "Local"} · ${Object.keys(g.variants).length ? Object.entries(g.variants).map(([k, vs]) => `${esc(k)}: ${Object.keys(vs).length}`).join(" · ") : "No variants"}</small></div>
       ${counts({ uses: g.instances, screens: g.screens, files: g.files, unit: "instance" })}
       <div class="what">${g.overridden ? `<span class="tag near">Overridden</span>${pct((g.overridden * 100) / g.instances)} of instances` : '<span class="muted">Not overridden</span>'}</div></div>`,
   (g, box) => openComponent(box, g, {}));
+  if (sh.previews) {
+    loadPreviews(el, stale);
+    // «Show more» дорисовывает строки — подгружаем и их превью.
+    new MutationObserver(() => loadPreviews(el, stale)).observe($("#list"), { childList: true });
+  }
+}
+
+/* Превью слоёв: Figma рисует их по запросу; просим пачкой на файл, одну картинку — один раз. */
+const PREVIEW_CACHE = {};
+function loadPreviews(root, stale) {
+  const byFile = {};
+  root.querySelectorAll("[data-pf]:not([data-pl])").forEach((t) => {
+    t.dataset.pl = "1";
+    const key = t.dataset.pf + "|" + t.dataset.pn;
+    if (PREVIEW_CACHE[key] !== undefined) { setPreview(t, PREVIEW_CACHE[key]); return; }
+    t.classList.add("waiting");
+    (byFile[t.dataset.pf] = byFile[t.dataset.pf] || []).push(t);
+  });
+  for (const [fk, els] of Object.entries(byFile)) {
+    const ids = [...new Set(els.map((t) => t.dataset.pn))];
+    for (let i = 0; i < ids.length; i += 40) {
+      const chunk = ids.slice(i, i + 40);
+      api("/api/previews" + fq({ file_key: fk, ids: chunk.join(",") })).then((r) => {
+        chunk.forEach((id) => (PREVIEW_CACHE[fk + "|" + id] = r.urls[id] || null));
+        if (stale && stale()) return;
+        els.filter((t) => chunk.includes(t.dataset.pn)).forEach((t) => setPreview(t, r.urls[t.dataset.pn]));
+      }).catch((e) => { els.forEach((t) => t.classList.remove("waiting")); toast(e.message, "err"); });
+    }
+  }
+}
+function setPreview(el, url) {
+  el.classList.remove("waiting");
+  el.innerHTML = url ? `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="muted" style="font-size:10px">—</span>';
 }
 
 function openComponent(box, g, chosen) {
+  if (S.show.components.previews && g.components.some((c) => c.preview)) return openSwitcher(box, g, chosen);
   const facets = Object.entries(g.variants).map(([k, vs]) => `<div class="vchips" style="margin-left:0"><span class="label" style="margin-right:4px">${esc(k)}</span>
     ${Object.entries(vs).sort((a, b) => b[1] - a[1]).map(([v, n]) => `<button class="chip ${chosen[k] === v ? "on" : ""}" data-k="${esc(k)}" data-v="${esc(v)}">${esc(v)}<em>${num(n)}</em></button>`).join("")}</div>`).join("");
   box.innerHTML = `${facets}<div class="kres"></div>`;
@@ -1204,6 +1245,53 @@ function openComponent(box, g, chosen) {
     openComponent(box, g, next);
   }));
   // Several variant properties at once go through the combined search.
+  const q = { comp: [g.set || g.cname] };
+  for (const [k, v] of Object.entries(chosen)) q["prop_" + k] = [v];
+  screensBlock(box.querySelector(".kres"), (offset, limit) => "/api/find" + fq({ ...q, offset, limit }),
+    (gr) => "/api/find/layers" + fq({ ...q, file_key: gr.file_key, screen: gr.screen_id || "" }));
+}
+
+/** Варианты одного набора — как в Figma: переключатели свойств, большое превью выбранного
+    варианта и сетка всех вариантов. Один и тот же вариант из разных файлов — одна карточка. */
+function openSwitcher(box, g, chosen) {
+  const byName = {};
+  for (const c of g.components) {
+    const v = byName[c.name] = byName[c.name] || { name: c.name, props: c.props, count: 0, preview: null };
+    v.count += c.count;
+    if (!v.preview && c.preview) v.preview = c.preview;
+  }
+  const variants = Object.values(byName).sort((a, b) => b.count - a.count);
+  const fits = (v) => Object.entries(chosen).every(([k, val]) => v.props[k] === val);
+  const matching = variants.filter(fits);
+  const shown = matching[0] || variants[0];
+  const props = Object.entries(g.variants);
+  const label = (v) => Object.keys(v.props).length ? Object.entries(v.props).map(([k, val]) => `${k}: ${val}`).join(" · ") : v.name || g.title;
+  box.innerHTML = `<div class="kswitch">
+      <div class="kbig sample" data-pf="${esc(shown.preview ? shown.preview[0] : "")}" data-pn="${esc(shown.preview ? shown.preview[1] : "")}"></div>
+      <div>
+        ${props.map(([k, vs]) => `<div class="kprop"><span class="label">${esc(k)}</span><div class="chips" style="padding:0">
+          ${Object.entries(vs).sort((a, b) => b[1] - a[1]).map(([v, n]) => {
+            const possible = variants.some((x) => x.props[k] === v && Object.entries(chosen).every(([ck, cv]) => ck === k || x.props[ck] === cv));
+            return `<button class="chip ${chosen[k] === v ? "on" : ""}" data-k="${esc(k)}" data-v="${esc(v)}" ${possible ? "" : 'style="opacity:.45"'}>${esc(v)}<em>${num(n)}</em></button>`;
+          }).join("")}</div></div>`).join("")}
+        <p class="label" style="margin:8px 0 0">${matching.length ? `<b style="color:var(--txt)">${esc(label(shown))}</b> · ${pl(matching.reduce((n, v) => n + v.count, 0), "instance")}${matching.length > 1 ? ` in ${pl(matching.length, "variant")}` : ""}`
+          : "No variant with this combination is used in the selected files."}${Object.keys(chosen).length ? ' · <button class="link" data-reset>Reset</button>' : ""}</p>
+      </div></div>
+    ${variants.length > 1 ? `<div class="sec" style="padding-left:0">All variants in use · ${num(variants.length)}</div>
+    <div class="vgrid">${variants.slice(0, 120).map((v, i) => `<button class="vcard ${matching.includes(v) && Object.keys(chosen).length ? "on" : ""}" data-vi="${i}">
+      <span class="sample" ${v.preview ? `data-pf="${esc(v.preview[0])}" data-pn="${esc(v.preview[1])}"` : ""}></span>
+      <span class="vl">${esc(label(v))}</span><span class="muted">${pl(v.count, "instance")}</span></button>`).join("")}</div>` : ""}
+    <div class="kres"></div>`;
+  box.querySelectorAll("[data-k]").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    const next = { ...chosen };
+    if (next[b.dataset.k] === b.dataset.v) delete next[b.dataset.k]; else next[b.dataset.k] = b.dataset.v;
+    openSwitcher(box, g, next);
+  }));
+  const rs = box.querySelector("[data-reset]");
+  if (rs) rs.onclick = (e) => { e.stopPropagation(); openSwitcher(box, g, {}); };
+  box.querySelectorAll("[data-vi]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); openSwitcher(box, g, { ...variants[+b.dataset.vi].props }); }));
+  loadPreviews(box);
   const q = { comp: [g.set || g.cname] };
   for (const [k, v] of Object.entries(chosen)) q["prop_" + k] = [v];
   screensBlock(box.querySelector(".kres"), (offset, limit) => "/api/find" + fq({ ...q, offset, limit }),

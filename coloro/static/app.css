@@ -234,6 +234,18 @@ button.tile{cursor:pointer} button.tile:hover{background:var(--btn)}
 .srow .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
 .srow .name small{display:block;font-weight:400;color:var(--muted);font-size:10.5px}
 .fsample{font-size:14px}
+.kthumb{background:repeating-conic-gradient(var(--btn) 0 25%,var(--panel) 0 50%) 0 0/8px 8px}
+.kthumb img,.kbig img,.vcard .sample img{width:100%;height:100%;object-fit:contain}
+.sample.waiting{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.45}}
+.kswitch{display:grid;grid-template-columns:minmax(180px,260px) 1fr;gap:16px;align-items:start;margin:4px 0 6px}
+.kbig{width:100%;height:200px;border-radius:var(--r);background:repeating-conic-gradient(var(--btn) 0 25%,var(--panel) 0 50%) 0 0/12px 12px;padding:10px}
+.kprop{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+.vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-bottom:8px}
+.vcard{border:1px solid transparent;background:var(--panel);border-radius:var(--r-sm);padding:6px;cursor:pointer;display:flex;flex-direction:column;gap:4px;text-align:left;color:inherit}
+.vcard:hover{background:var(--btn)} .vcard.on{border-color:var(--accent)}
+.vcard .sample{width:100%;height:72px;background:repeating-conic-gradient(var(--btn) 0 25%,var(--panel) 0 50%) 0 0/8px 8px;padding:4px}
+.vcard .vl{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vchips{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px 40px}
 .notice{background:var(--fair-bg);color:var(--fair-tx);border-radius:var(--r-sm);padding:9px 12px;margin-bottom:12px}
 .notice a{color:inherit;text-decoration:underline;cursor:pointer}

@@ -94,6 +94,22 @@ class Search(unittest.TestCase):
         self.assertEqual(button["screens"], 1)
         self.assertTrue(button["remote"])
 
+    def test_preview_layer(self):
+        # Библиотечный компонент рисуется через свой инстанс, поставленный на экран напрямую.
+        items = {g["title"]: g for g in search.components(self.con, Filter())["items"]}
+        self.assertEqual(items["Кнопка"]["preview"], ["K", "b1"])
+        self.assertEqual(items["Avatar"]["preview"], ["K", "b3"])
+
+    def test_local_component_previews_itself(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            con = dbm.connect(Path(tmp) / "t.sqlite")
+            f = FakeWithComponents([page("1:1", "Stage", [node("C3", "COMPONENT", "Avatar"),
+                                                          node("s", "FRAME", children=[node("b", "INSTANCE", componentId="C3")])])])
+            load_file(con, f, "K")
+            g = search.components(con, Filter())["items"][0]
+            self.assertEqual(g["preview"], ["K", "C3"])
+            con.close()
+
     def test_search_by_set(self):
         self.assertEqual(self.found("component", set="Кнопка"), ["b1", "b2"])
 

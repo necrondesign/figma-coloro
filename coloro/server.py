@@ -70,6 +70,38 @@ def image_urls(file_key: str) -> dict:
     return urls
 
 
+# Превью компонентов: Figma рисует слой картинкой и отдаёт ссылку, живущую несколько недель.
+# Запоминаем на сутки, рисуем пачками и не больше трёх запросов разом.
+_PREVIEWS: dict[tuple[str, str], tuple[float, str | None]] = {}
+_PREVIEW_TTL = 86400
+_PREVIEW_BATCH = 40
+
+
+def previews(file_key: str, ids: list[str]) -> dict:
+    now = time.time()
+    with _IMAGE_LOCK:
+        have = {i: _PREVIEWS[(file_key, i)][1] for i in ids
+                if (file_key, i) in _PREVIEWS and now - _PREVIEWS[(file_key, i)][0] < _PREVIEW_TTL}
+    need = [i for i in ids if i not in have]
+    if need:
+        token = read_token()
+        if not token:
+            raise ValueError("A Figma access token is required. Add it in Settings.")
+        figma = Figma(token)
+        for k in range(0, len(need), _PREVIEW_BATCH):
+            batch = need[k:k + _PREVIEW_BATCH]
+            with _IMAGE_GATE:
+                try:
+                    got = figma.get_json(f"/images/{file_key}", {"ids": ",".join(batch), "format": "png", "scale": 1}).get("images") or {}
+                except FigmaError:
+                    got = {}       # слой не рисуется (удалён, слишком велик) — без превью, но не ошибка экрана
+            with _IMAGE_LOCK:
+                for i in batch:
+                    _PREVIEWS[(file_key, i)] = (now, got.get(i))
+                    have[i] = got.get(i)
+    return have
+
+
 def read_token() -> str:
     # Переменная окружения — как у команды load: удобно, когда токен лежит в другом месте.
     env = os.environ.get("FIGMA_TOKEN", "").strip()
@@ -414,6 +446,12 @@ class Handler(BaseHTTPRequestHandler):
             name = f"coloro-report-{datetime.now().strftime('%Y-%m-%d')}.html"
             return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8",
                               {"Content-Disposition": f'attachment; filename="{name}"'})
+        if path == "/api/previews":
+            fk = flat.get("file_key", "")
+            if not con.execute("SELECT 1 FROM files WHERE file_key = ?", (fk,)).fetchone():
+                return self._error("Unknown file", 404)
+            ids = [i for i in flat.get("ids", "").split(",") if i][:200]
+            return self._json({"urls": previews(fk, ids)})
         if path == "/api/image-urls":
             fk = flat.get("file_key", "")
             if not con.execute("SELECT 1 FROM files WHERE file_key = ?", (fk,)).fetchone():

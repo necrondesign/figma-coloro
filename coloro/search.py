@@ -269,7 +269,12 @@ def components(con, filt: Filter, q: str = "") -> dict:
         "SELECT n.file_key, n.comp, c.name, c.set_id, c.set_name, c.remote,"
         # Перечень экранов, а не их число: у набора экраны считаются по всем вариантам вместе —
         # экран, где стоят две разные кнопки одного набора, — это один экран, а не два.
-        " COUNT(*), SUM(n.ovr), GROUP_CONCAT(DISTINCT n.screen), MAX(n.screen IS NULL)"
+        " COUNT(*), SUM(n.ovr), GROUP_CONCAT(DISTINCT n.screen), MAX(n.screen IS NULL),"
+        # Образец для превью: видимый инстанс, поставленный на экран напрямую, а не вложенный в
+        # другой инстанс, — такой слой Figma умеет нарисовать отдельной картинкой. Сначала без
+        # изменений (тексты и цвета как в компоненте), иначе любой.
+        " COALESCE(MIN(CASE WHEN n.hid = 0 AND IFNULL(n.ovr, 0) = 0 AND instr(n.id, ';') = 0 AND n.id NOT LIKE 'I%' THEN n.id END),"
+        " MIN(CASE WHEN n.hid = 0 AND instr(n.id, ';') = 0 AND n.id NOT LIKE 'I%' THEN n.id END))"
         " FROM nodes n" + NODE_SCAN +
         " LEFT JOIN components c ON c.file_key = n.file_key AND c.id = n.comp"
         f" WHERE n.type = 'INSTANCE' AND {where}"
@@ -277,7 +282,12 @@ def components(con, filt: Filter, q: str = "") -> dict:
         # компонентов и ищет каждый слой по ключу — на 4,3 млн слоёв 3,8 с вместо 1,2.
         " GROUP BY n.file_key, +n.comp", fargs).fetchall()
     sets: dict[str, dict] = {}
-    for fk, cid, name, sid, sname, remote, count, ovr, scr_list, no_screen in rows:
+    # Свой компонент лежит в файле — рисуем его самого: это эталон, без правок инстанса.
+    local = set()
+    for fk, cid in {(r[0], r[1]) for r in rows if r[1]}:
+        if con.execute("SELECT 1 FROM nodes WHERE file_key = ? AND id = ? AND type = 'COMPONENT'", (fk, cid)).fetchone():
+            local.add((fk, cid))
+    for fk, cid, name, sid, sname, remote, count, ovr, scr_list, no_screen, sample in rows:
         title = sname or name or "Untitled"
         key = f"set:{sname}" if sname else f"c:{name or cid}"
         if qn and qn not in norm(title) and qn not in norm(name or ""):
@@ -292,8 +302,9 @@ def components(con, filt: Filter, q: str = "") -> dict:
         if no_screen:
             g["screens"].add((fk, None))
         g["files"].add(fk)
+        preview = [fk, cid] if (fk, cid) in local else [fk, sample] if sample else None
         g["components"].append({"id": cid, "file_key": fk, "name": name or "", "count": count,
-                                "props": variant_props(name or "")})
+                                "props": variant_props(name or ""), "preview": preview})
         for k, v in variant_props(name or "").items():
             g["variants"].setdefault(k, {}).setdefault(v, 0)
             g["variants"][k][v] += count
@@ -302,6 +313,7 @@ def components(con, filt: Filter, q: str = "") -> dict:
         g["files"] = len(g["files"])
         g["screens"] = len(g["screens"])
         g["components"].sort(key=lambda c: -c["count"])
+        g["preview"] = next((c["preview"] for c in g["components"] if c["preview"]), None)
         out.append(g)
     out.sort(key=lambda g: -g["instances"])
     return {"items": out, "total": len(out)}
