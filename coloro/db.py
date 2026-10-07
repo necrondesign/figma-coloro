@@ -13,7 +13,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from .textnorm import norm
+from .textnorm import norm, whole_words
 
 # Формат данных. Поднимается, когда меняется то, что извлекается из макета:
 # файлы, загруженные в старом формате, при следующем обновлении перезагружаются.
@@ -200,6 +200,8 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # Встроенная lower() в SQLite не опускает регистр кириллицы: «Кнопка» и «кнопка» для неё
     # разные строки. Своя функция — та же, что строит поисковые колонки при загрузке.
     con.create_function("norm", 1, norm, deterministic=True)
+    # Совпадение целыми словами — проверяется только у строк, прошедших быстрый отбор LIKE.
+    con.create_function("whole_words", 2, whole_words, deterministic=True)
     with _SCHEMA_LOCK:
         if str(p.resolve()) not in _READY:
             con.executescript(SCHEMA)

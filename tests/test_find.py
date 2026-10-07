@@ -98,6 +98,16 @@ class Find(unittest.TestCase):
         _, ids = self.found(q="монет купить", where="text", mode="exact")
         self.assertEqual(ids, [])
 
+    def test_whole_words_flag(self):
+        # «подпис» частью слова есть в «подписку», целым словом «подпись» — нет.
+        _, ids = self.found(q="подпис", where="text", mode="exact")
+        self.assertEqual(ids, ["t2"])
+        _, ids = self.found(q="подпис", where="text", mode="exact", whole="1")
+        self.assertEqual(ids, [])
+        _, ids = self.found(q="монеты", where="text", whole="1")
+        self.assertEqual(ids, ["t1"])
+        self.assertEqual(search.texts(self.con, Filter(), "монет", mode="exact", whole=True)["matched"], 1)
+
     def test_several_places_at_once(self):
         _, ids = self.found(q="кнопка", where=["name"])
         self.assertEqual(ids, ["b1", "b2"])       # слои с этим названием

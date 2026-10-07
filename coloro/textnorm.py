@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 _WORD = re.compile(r"[0-9a-zа-яё]+", re.I)
 
@@ -157,3 +158,40 @@ def query_stems(q: str) -> list[str]:
         if s and s not in out:
             out.append(s)
     return out
+
+
+# ---------------------------------------------------------------- целые слова
+
+_LETTER = "0-9a-zа-яё"
+
+
+@lru_cache(maxsize=300_000)
+def _stem_cached(word: str) -> str:
+    return stem(word)
+
+
+@lru_cache(maxsize=256)
+def _phrase_re(phrase: str):
+    return re.compile(rf"(?<![{_LETTER}]){re.escape(phrase)}(?![{_LETTER}])")
+
+
+def whole_words(text: str | None, spec: str | None) -> int:
+    """Совпадение целыми словами, для SQLite: 1 или 0.
+
+    spec «x:фраза» — фраза не внутри более длинного слова; «f:осн1,осн2» — в тексте есть слово
+    с каждой основой: основа слова текста совпадает с основой запроса, а не просто начинается
+    с неё. Так «кот» находит «кота» и «котом», но не «котлету»: у неё основа «котлет».
+    Беглая гласная учитывается: «кнопок» — та же основа, что «кнопка»."""
+    if not text or not spec:
+        return 0
+    kind, _, value = spec.partition(":")
+    if kind == "x":
+        return 1 if _phrase_re(value).search(text) else 0
+    words = {_stem_cached(m.group(0)) for m in _WORD.finditer(text)}
+    for s in value.split(","):
+        if s in words:
+            continue
+        if any(len(w) == len(s) + 1 and w[:-2] + w[-1] == s for w in words):
+            continue
+        return 0
+    return 1

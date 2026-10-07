@@ -453,7 +453,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/texts":
             return self._json(search.texts(con, filt, flat.get("q", ""), flat.get("mode", "forms"),
                                            limit=max(1, min(5000, int(flat.get("limit") or 500))),
-                                           cat=flat.get("cat", "all"), sort=flat.get("sort", "uses")))
+                                           cat=flat.get("cat", "all"), sort=flat.get("sort", "uses"),
+                                           whole=flat.get("whole") == "1"))
         if path == "/api/typography":
             return self._json(remember("typography", lambda: typography.fonts(con, filt)))
         if path == "/api/components":

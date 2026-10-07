@@ -22,6 +22,15 @@ class Stems(unittest.TestCase):
     def test_norm(self):
         self.assertEqual(norm("  Ёлка   ПРОДАНА "), "елка продана")
 
+    def test_whole_words(self):
+        from coloro.textnorm import whole_words
+        self.assertTrue(whole_words("купить кота", "f:" + ",".join(query_stems("кот"))))
+        self.assertTrue(whole_words("с котом", "f:" + ",".join(query_stems("кот"))))
+        self.assertFalse(whole_words("котлета", "f:" + ",".join(query_stems("кот"))))
+        self.assertTrue(whole_words("нет кнопок", "f:" + ",".join(query_stems("кнопка"))))
+        self.assertTrue(whole_words("купить 100 монет!", "x:100 монет"))
+        self.assertFalse(whole_words("купить 1100 монеток", "x:100 монет"))
+
     def test_short_words_kept_whole(self):
         self.assertEqual(query_stems("VIP 100 к"), ["vip", "100", "к"])
 

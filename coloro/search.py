@@ -409,12 +409,19 @@ def build(con, q: dict) -> tuple[str, list, dict]:
         # Как совпадать: «forms» — слова в любой форме и в любом порядке; «exact» — фраза целиком,
         # как написана (без учёта регистра и «ё»).
         exact = _one(q, "mode") == "exact"
+        whole = _one(q, "whole") in ("1", "true", "on")
         phrase = norm(text)
+        spec = ("x:" + phrase) if exact else ("f:" + ",".join(stems))
 
         def match(column):
             if exact:
-                return f"{column} LIKE ?", [f"%{phrase}%"]
-            return _all_words(column, stems)
+                c, a = f"{column} LIKE ?", [f"%{phrase}%"]
+            else:
+                c, a = _all_words(column, stems)
+            if whole:
+                # Сначала быстрый отбор по вхождению, затем проверка целыми словами.
+                return f"({c} AND whole_words({column}, ?))", a + [spec]
+            return c, a
         ors, oargs = [], []
         if "text" in where:
             c, a = match("n.tnorm")
@@ -587,7 +594,7 @@ TEXT_SORTS = {
 
 
 def texts(con, filt: Filter, q: str = "", mode: str = "forms", limit: int = 500,
-          cat: str = "all", sort: str = "uses") -> dict:
+          cat: str = "all", sort: str = "uses", whole: bool = False) -> dict:
     """Все тексты макетов: одинаковый текст в разных местах — одна строка со счётом.
 
     Видно, какие формулировки повторяются, где одно и то же написано по-разному и какие тексты
@@ -598,9 +605,15 @@ def texts(con, filt: Filter, q: str = "", mode: str = "forms", limit: int = 500,
         stems = query_stems(q)
         if mode == "exact":
             cond, cargs = " AND n.tnorm LIKE ?", [f"%{norm(q)}%"]
+            if whole:
+                cond += " AND whole_words(n.tnorm, ?)"
+                cargs.append("x:" + norm(q))
         elif stems:
             c, cargs = _all_words("n.tnorm", stems)
             cond = " AND " + c
+            if whole:
+                cond += " AND whole_words(n.tnorm, ?)"
+                cargs.append("f:" + ",".join(stems))
         else:
             cargs = []
         args = args + cargs

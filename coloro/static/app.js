@@ -76,7 +76,7 @@ const DEFAULT_SHOW = {
   effects: { cat: "unbound" },
   images: { cat: "repeated" },
   components: { cat: "all", q: "", previews: true },
-  text: { cat: "all", q: "", mode: "forms", sort: "uses" },
+  text: { cat: "all", q: "", mode: "forms", sort: "uses", whole: false },
 };
 const S = {
   st: null,
@@ -123,7 +123,7 @@ function fq(extra = {}) {
 function sq(extra = {}) {
   const s = S.search || {};
   const where = s.where && s.where.length && s.where.length < 3 ? s.where : [];
-  const o = { q: s.q, where, mode: s.mode === "exact" ? "exact" : "", w: s.w, h: s.h, tol: s.tol, color: s.color, ctol: s.color ? s.ctol : "",
+  const o = { q: s.q, where, mode: s.mode === "exact" ? "exact" : "", whole: s.whole ? "1" : "", w: s.w, h: s.h, tol: s.tol, color: s.color, ctol: s.color ? s.ctol : "",
     type: s.type || [], page: s.page || [], comp: s.comp || [], ...extra };
   for (const [k, v] of Object.entries(s.props || {})) o["prop_" + k] = v;
   return fq(o);
@@ -553,6 +553,7 @@ function writeHash() {
     const s = S.search, q = new URLSearchParams();
     for (const k of ["q", "w", "h", "tol", "color", "ctol"]) if (s[k] && !(k === "ctol" && !s.color)) q.set(k, s[k]);
     if (s.mode === "exact") q.set("mode", "exact");
+    if (s.whole) q.set("whole", "1");
     if (s.where && s.where.length && s.where.length < 3) s.where.forEach((v) => q.append("where", v));
     for (const k of ["type", "page", "comp"]) (s[k] || []).forEach((v) => q.append(k, v));
     for (const [k, vs] of Object.entries(s.props || {})) vs.forEach((v) => q.append("prop_" + k, v));
@@ -566,7 +567,7 @@ function readHash() {
     const q = new URLSearchParams(query);
     const props = {};
     for (const [k, v] of q) if (k.startsWith("prop_")) (props[k.slice(5)] = props[k.slice(5)] || []).push(v);
-    S.search = { q: q.get("q") || "", where: q.getAll("where"), mode: q.get("mode") || "forms", w: q.get("w") || "", h: q.get("h") || "", tol: q.get("tol") || "",
+    S.search = { q: q.get("q") || "", where: q.getAll("where"), mode: q.get("mode") || "forms", whole: q.get("whole") === "1", w: q.get("w") || "", h: q.get("h") || "", tol: q.get("tol") || "",
       color: q.get("color") || "", ctol: q.get("ctol") || 3, type: q.getAll("type"), page: q.getAll("page"), comp: q.getAll("comp"), props };
   } else if (TYPES.some((t) => t.k === path)) {
     S.type = path; S.search = null;
@@ -1102,17 +1103,19 @@ const XHINT = {
 
 async function viewText(el, stale) {
   const sh = S.show.text;
-  const d = await api("/api/texts" + fq({ q: sh.q, mode: sh.mode === "exact" ? "exact" : "", cat: sh.cat, sort: sh.sort, limit: 3000 }));
+  const d = await api("/api/texts" + fq({ q: sh.q, mode: sh.mode === "exact" ? "exact" : "", whole: sh.whole && sh.q ? "1" : "", cat: sh.cat, sort: sh.sort, limit: 3000 }));
   if (stale()) return;
   const items = d.items;
   $("#tname").innerHTML = `Text<span>${pl(d.total, "text")}</span>`;
   drawShow(`<div class="field"><span class="label">Find text</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Word or phrase"></div>
     ${seg([["forms", "Any word form"], ["exact", "Exact phrase"]], sh.mode === "exact" ? "exact" : "forms", "tmode")}
+    <div class="checks" style="margin-top:6px"><label><input type="checkbox" data-twhole ${sh.whole ? "checked" : ""}>Whole words only</label></div>
     <div class="sec">Show</div>${chips(XCATS.map(([k, t]) => [k, t, d.counts[k]]), sh.cat)}
     <div class="field" style="margin-top:6px"><span class="label">Sort by</span>${select("sort", [["uses", "Most used"], ["screens", "Number of screens"], ["long", "Longest first"], ["az", "A to Z"]], sh.sort)}</div>`,
   (root) => {
     bindShow(root, "text", () => route());
     root.querySelectorAll("[data-tmode]").forEach((b) => (b.onclick = () => { sh.mode = b.dataset.tmode; save(); route(); }));
+    root.querySelector("[data-twhole]").onchange = (e) => { sh.whole = e.target.checked; save(); route(); };
   });
   el.innerHTML = `<div class="head"><div class="grow"><h1>Text · ${esc(XCATS.find(([k]) => k === sh.cat)[1])}</h1>
     <p class="sub">${esc(XHINT[sh.cat])} ${pl(d.matched, "text")}${d.matched > items.length ? `, the first ${num(items.length)} shown` : ""}. Texts are equal when they match ignoring case, ё and spaces.</p></div></div>
@@ -1591,7 +1594,9 @@ async function viewSearch(el, stale) {
   drawShow(`${s.q ? `<div class="sec">Search text in</div><div class="checks" data-where>
       ${[["text", "Text layers"], ["name", "Layer names"], ["component", "Component names"]].map(([k, t]) => `<label><input type="checkbox" value="${k}" ${where.includes(k) ? "checked" : ""}>${t}</label>`).join("")}</div>
     <div class="sec">Match</div>${seg([["forms", "Any word form"], ["exact", "Exact phrase"]], s.mode === "exact" ? "exact" : "forms", "mode")}
-    <p class="label" style="padding:6px;margin:0">${s.mode === "exact" ? "The words in this order, as written. Case and ё are ignored." : "All words in any form and any order: “buy coins” finds “Buy 100 coins”."}</p>` : ""}
+    <div class="checks" style="margin-top:6px"><label><input type="checkbox" data-whole ${s.whole ? "checked" : ""}>Whole words only</label></div>
+    <p class="label" style="padding:6px;margin:0">${s.mode === "exact" ? "The words in this order, as written. Case and ё are ignored." : "All words in any form and any order: “buy coins” finds “Buy 100 coins”."}
+      ${s.whole ? (s.mode === "exact" ? " Not as part of a longer word." : " A word must be a form of the query word: “cat” finds “cats”, not “catalog”.") : " Also finds the query inside longer words."}</p>` : ""}
     <div class="field"><span class="label">Size tolerance, px</span><input class="in" data-o="tol" value="${esc(s.tol || "")}" placeholder="0.5" inputmode="decimal"></div>
     ${facet("Type", "type", d.facets.type, (v) => TYPE_NAMES[v] || v)}
     ${facet("Component", "comp", d.facets.comp)}${props}
@@ -1603,6 +1608,8 @@ async function viewSearch(el, stale) {
       s.where = chosen; route();
     }));
     root.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = () => { s.mode = b.dataset.mode; route(); }));
+    const wh = root.querySelector("[data-whole]");
+    if (wh) wh.onchange = () => { s.whole = wh.checked; route(); };
     root.querySelector("[data-o=tol]").oninput = debounce((e) => { s.tol = e.target.value.trim(); route(); }, 450);
     root.querySelectorAll("[data-facet] input").forEach((i) => (i.onchange = () => {
       const k = i.closest("[data-facet]").dataset.facet;
