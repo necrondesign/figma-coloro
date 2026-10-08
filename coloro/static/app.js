@@ -173,13 +173,18 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest("#cpop,#swBtn")) $("#cpop").hidden = true;
 });
 addEventListener("resize", fit);
-// Полоски прокрутки видны, только пока прокручиваешь, и гаснут через секунду.
+// Ползунок прокрутки поверх содержимого: виден, только пока прокручиваешь, места не занимает.
+const THUMB = document.body.appendChild(Object.assign(document.createElement("div"), { className: "sthumb" }));
 document.addEventListener("scroll", (e) => {
-  const el = e.target === document ? document.documentElement : e.target;
-  if (!el.classList) return;
-  el.classList.add("scrolling");
-  clearTimeout(el._scrollT);
-  el._scrollT = setTimeout(() => el.classList.remove("scrolling"), 900);
+  const el = e.target === document ? document.scrollingElement : e.target;
+  if (!el || !el.getBoundingClientRect || el.scrollHeight <= el.clientHeight + 1) return;
+  const r = el.getBoundingClientRect(), ch = el.clientHeight, sh = el.scrollHeight;
+  const h = Math.max(28, (ch * ch) / sh) - 8;
+  const top = r.top + 4 + (ch - 8 - h) * (el.scrollTop / (sh - ch));
+  THUMB.style.top = top + "px"; THUMB.style.left = r.left + el.clientWidth - 7 + "px"; THUMB.style.height = h + "px";
+  THUMB.classList.add("on");
+  clearTimeout(THUMB._t);
+  THUMB._t = setTimeout(() => THUMB.classList.remove("on"), 800);
 }, true);
 
 function applyTheme(light) {
