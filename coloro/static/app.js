@@ -450,7 +450,8 @@ function go(type, show) {
 
 const chips = (items, active, attr = "cat") => `<div class="chips">${items.map(([k, t, n, extra]) =>
   `<button class="chip ${String(k) === String(active) ? "on" : ""}" data-${attr}="${esc(k)}">${extra || ""}${esc(t)}${n != null ? `<em>${num(n)}</em>` : ""}</button>`).join("")}</div>`;
-const seg = (items, active, attr) => `<div class="seg">${items.map(([k, t]) => `<button class="${k === active ? "on" : ""}" data-${attr}="${k}">${esc(t)}</button>`).join("")}</div>`;
+/* A choice of one: tags like everywhere else, so long labels wrap instead of being cut. */
+const seg = (items, active, attr) => `<div class="chips">${items.map(([k, t]) => `<button class="chip ${k === active ? "on" : ""}" data-${attr}="${k}">${esc(t)}</button>`).join("")}</div>`;
 const select = (name, items, value) => `<select class="in" data-sel="${name}">${items.map(([k, t]) => `<option value="${k}" ${String(k) === String(value) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
 
 /** Right panel «Show» section for the current view. */
@@ -470,10 +471,11 @@ function drawInclude() {
   $("#include").innerHTML = tg("hidden", "Hidden layers", f.hidden) + tg("archive", "Archived pages", f.archive) + tg("instances", "Layers inside instances", f.instances) +
     `<div class="field"><span class="label">Page name contains</span><input class="in" data-f="pages" value="${esc(f.pages)}" placeholder="All pages"></div>
      <div class="field"><span class="label">Exclude sections containing</span><input class="in" data-f="skip" value="${esc(f.skip)}" placeholder="None"></div>
-     <div class="field"><span class="label">Layers added since</span><input class="in" type="date" data-f="since" value="${esc(f.since)}"></div>
-     <div class="field"><span class="label">Files modified since</span><input class="in" type="date" data-f="modified_since" value="${esc(f.modified_since)}"></div>`;
+     <div class="field"><span class="label">Layers added since</span><input type="hidden" data-date data-f="since" value="${esc(f.since)}"></div>
+     <div class="field"><span class="label">Files modified since</span><input type="hidden" data-date data-f="modified_since" value="${esc(f.modified_since)}"></div>`;
   $$("#include [data-tg]").forEach((r) => (r.onclick = () => { S.filters[r.dataset.tg] = !S.filters[r.dataset.tg]; save(); drawInclude(); reload(); }));
   $$("#include [data-f]").forEach((i) => (i.oninput = debounce(() => { S.filters[i.dataset.f] = i.value.trim(); save(); badges(); reload(); }, 450)));
+
   badges();
 }
 $("#resetF").onclick = () => { S.filters = { ...DEFAULT_F }; save(); drawInclude(); reload(); toast("Filters reset"); };
@@ -923,7 +925,7 @@ function colourWhat(i) {
 const colorViews = () => {
   const themes = projectThemes();
   const theme = themes.includes(S.themes[S.project]) ? S.themes[S.project] : "";
-  return seg([["colors", "Colors"], ["gradients", "Gradients"], ["contrast", "Contrast"], ["surfaces", "Surfaces"]], S.show.colors.view, "cview")
+  return '<div class="sec">View</div>' + seg([["colors", "Colors"], ["gradients", "Gradients"], ["contrast", "Contrast"], ["surfaces", "Surfaces"]], S.show.colors.view, "cview")
     + (themes.length > 1 ? `<div class="field"><span class="label">Compare with theme</span>${select("theme", [["", "All themes"], ...themes.map((m) => [m, modeName(m)])], theme)}</div>` : "");
 };
 function bindColorViews(root) {
@@ -1128,7 +1130,7 @@ async function viewTokensPage(el, stale) {
   el.innerHTML = `<div class="head"><div class="grow"><h1>Tokens</h1><p class="sub">${d.library === "files"
       ? "No token library is loaded, so this is the system taken from the files: every color used through a style or a variable. Style names are shown; variable names need a token library."
       : `${pl(inColl.length, "variable")} in this collection${modes.length > 1 ? `, ${pl(modes.length, "mode")}` : ""}. ${d.exact ? "“Bound” counts layers bound to the variable itself, matched by the variable key; “Typed by hand” counts the same value set without a variable." : "Uses count values equal to the token in the files. Add a “key” column to the library to count exact bindings."}`}</p></div></div>
-    ${colls.length > 1 ? `<div class="seg tcolls">${colls.map((c) => `<button class="${c === sh.coll ? "on" : ""}" data-coll="${esc(c)}">${esc(c || "No collection")}</button>`).join("")}</div>` : ""}
+    ${colls.length > 1 ? `<div class="chips tcolls">${colls.map((c) => `<button class="chip ${c === sh.coll ? "on" : ""}" data-coll="${esc(c)}">${esc(c || "No collection")}</button>`).join("")}</div>` : ""}
     <div class="tokwrap">
       <nav class="tgroups"><button class="${!sh.group ? "on" : ""}" data-grp="">All variables<em>${num(base.length)}</em></button>
         ${groups.map((g) => `<button class="${sh.group === g ? "on" : ""}" data-grp="${esc(g)}" style="padding-left:${8 + (g.split("/").length - 1) * 12}px">${esc(g.split("/").pop())}<em>${num(tree[g])}</em></button>`).join("")}</nav>
@@ -1324,7 +1326,7 @@ async function viewSpacing(el, stale) {
   const items = d.items.filter((i) => sh.cat === "all" || i.status === sh.cat);
   const tt = d.totals;
   $("#tname").innerHTML = `Spacing & radius<span>${pl(tt.near + tt.off, "value")} off the scale</span>`;
-  drawShow(`${seg(SGROUPS, sh.group, "grp")}<div class="sec">Status</div>${chips(cats.map(([k, t]) => [k, t, sum(k)]), sh.cat)}`, (root) => {
+  drawShow(`<div class="sec">View</div>${seg(SGROUPS, sh.group, "grp")}<div class="sec">Status</div>${chips(cats.map(([k, t]) => [k, t, sum(k)]), sh.cat)}`, (root) => {
     bindShow(root, "spacing", () => route());
     root.querySelectorAll("[data-grp]").forEach((b) => (b.onclick = () => { sh.group = b.dataset.grp; save(); route(); }));
   });
@@ -2101,7 +2103,7 @@ function openSettings() {
   const t = p.tokens;
   dialog("Settings", `
     <h4>Interface language</h4>
-    <div class="seg flush" id="langSeg"><button data-lang="en" class="${I18N.lang === "en" ? "on" : ""}">English</button><button data-lang="ru" class="${I18N.lang === "ru" ? "on" : ""}">Русский</button></div>
+    <div class="chips" id="langSeg"><button data-lang="en" class="chip ${I18N.lang === "en" ? "on" : ""}">English</button><button data-lang="ru" class="chip ${I18N.lang === "ru" ? "on" : ""}">Русский</button></div>
     <h4>Figma access</h4>
     <p>${st.figma_token ? "<b>Connected.</b> The token is stored only on this computer, in a file readable by your account only." : "<b>Not connected.</b> Stealer cannot load files without a token."}</p>
     <p class="hint">${TOKEN_WHY}</p>
@@ -2149,6 +2151,7 @@ const VIEWS = { comments: viewComments, colors: viewColors, tokens: viewTokensPa
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });
 (async function start() {
   I18N.start();
+  Controls.start();
   applyTheme(document.documentElement.classList.contains("pre-light"));
   if (LS.get("closed.l", false)) document.body.classList.add("l-closed");
   if (LS.get("closed.r", false)) document.body.classList.add("r-closed");

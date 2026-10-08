@@ -286,7 +286,7 @@ const I18N = (() => {
     "Padding": "Поля", "Align": "Выравнивание", "Sizing": "Размеры", "Corner radius": "Скругление", "Effect": "Эффект",
     "Layers": "Слои", "Code": "Код", "Copy CSS": "Скопировать CSS", "Section": "Секция",
     // settings and dialogs
-    "Interface language": "Язык интерфейса", "Figma access": "Доступ к Figma", "Token library": "Справочник токенов",
+    "Interface language": "Язык интерфейса", "View": "Вид", "Figma access": "Доступ к Figma", "Token library": "Справочник токенов",
     "Updates": "Обновления", "Files downloaded at the same time": "Файлов загружается одновременно",
     "More is faster but closer to the Figma rate limit. 4 is a safe default.": "Больше — быстрее, но ближе к лимиту Figma. 4 — безопасное значение.",
     "Normally an update downloads only files and pages that changed. Use this if the data looks wrong.": "Обычно обновление скачивает только изменившиеся файлы и страницы. Используйте это, если данные выглядят неверно.",
