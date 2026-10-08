@@ -218,7 +218,11 @@ button.tile{cursor:pointer} button.tile:hover{background:var(--btn)}
 .sample.onbg{border:1px solid var(--line)} .sample.onbg b{font-size:12px;font-weight:600}
 .onrow{display:inline-flex;gap:3px;margin-right:6px;vertical-align:middle} .onrow .sample{width:22px;height:22px} .onrow .sample b{font-size:9px}
 .tonebar{display:flex;height:6px;border-radius:3px;overflow:hidden;width:160px;margin:3px 0;background:var(--btn)}
-.tonebar i{display:block;height:100%} .tonebar .t-light{background:#ececec} .tonebar .t-dark{background:#2a2a2e}
+.tonebar i{display:block;height:100%} .tonebar.mini{width:90px;height:4px;margin:4px 0 0}
+.sdetail{padding:8px 4px} .slist{display:flex;flex-direction:column;gap:2px}
+.srow.sub{display:grid;grid-template-columns:30px minmax(0,1fr) 110px minmax(0,1fr);gap:10px;align-items:center;padding:6px;border-radius:var(--r-sm);cursor:pointer}
+.srow.sub:hover,.srow.sub.open{background:var(--btn)} .srow.sub .name small{display:block;color:var(--muted)}
+.subplaces{padding:4px 0 8px 40px} .ksurf{margin:6px 0} .chip .sdot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px} .tonebar .t-light{background:#ececec} .tonebar .t-dark{background:#2a2a2e}
 .tonebar .t-image{background:#9a9a9a} .tonebar .t-gradient{background:linear-gradient(90deg,#7a7ff0,#f07ab8)} .tonebar .t-none{background:transparent} .tonebar .t-mixed{background:linear-gradient(90deg,#ececec 50%,#2a2a2e 50%)}
 .gbar{height:30px;border-radius:var(--r-sm);border:1px solid var(--line)}
 .stops{display:flex;gap:3px;flex-wrap:wrap}

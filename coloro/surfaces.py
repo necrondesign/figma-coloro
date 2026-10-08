@@ -23,6 +23,7 @@ AA, AA_LARGE, AAA, AAA_LARGE = 4.5, 3.0, 7.0, 4.5
 UNUSUAL_SHARE = 0.1          # меньше такой доли мест на фоне этого тона — необычное место
 UNUSUAL_MIN_USES = 10        # у компонента должно быть хотя бы столько мест, чтобы судить
 TOP = 12
+MAX_ON = 200                 # сколько компонентов показывать на одной поверхности
 
 
 def parse(key: str | None) -> dict:
@@ -150,6 +151,8 @@ def report(con, filt: Filter, idx) -> dict:
         t = tone(parse(val(bg)))
         g["tones"][t] = g["tones"].get(t, 0) + uses
         g["bgs"].setdefault(t, set()).add(bg)
+        g.setdefault("on", {})
+        g["on"][bg] = g["on"].get(bg, 0) + uses
         on = on_surface.setdefault(bg, {})
         on[key] = on.get(key, 0) + uses
 
@@ -161,8 +164,13 @@ def report(con, filt: Filter, idx) -> dict:
             for t, n in g["tones"].items():
                 if t != main and t in ("light", "dark") and main in ("light", "dark") and n / g["uses"] < UNUSUAL_SHARE:
                     unusual.append({"tone": t, "uses": n, "bgs": sorted(b for b in g["bgs"][t] if b)})
+        on = []
+        for bg, n in sorted(g.get("on", {}).items(), key=lambda kv: -kv[1])[:40]:
+            p = parse(val(bg))
+            on.append({"bg": bg, "name": _name(p, idx), "kind": p["kind"], "color": p["color"], "alpha": p["alpha"],
+                       "tone": tone(p), "uses": n})
         components.append({"kind": g["kind"], "name": g["name"], "uses": g["uses"], "screens": g["screens"],
-                           "files": g["files"], "tones": g["tones"], "unusual": unusual,
+                           "files": g["files"], "tones": g["tones"], "unusual": unusual, "on": on,
                            "unusual_uses": sum(u["uses"] for u in unusual)})
     components.sort(key=lambda g: (-g["unusual_uses"], -g["uses"], g["name"]))
 
@@ -188,7 +196,7 @@ def report(con, filt: Filter, idx) -> dict:
                     "text_colors": [{"color": c, "alpha": a, "uses": n} for (c, a), n in
                                     sorted(s["colors"].items(), key=lambda kv: -kv[1])[:TOP]],
                     "top_components": [{"kind": k[0], "name": k[1], "uses": n} for k, n in
-                                       sorted(on.items(), key=lambda kv: -kv[1])[:TOP]]})
+                                       sorted(on.items(), key=lambda kv: -kv[1])[:MAX_ON]]})
     out.sort(key=lambda s: (-s["uses"], s["name"]))
 
     def total(st):

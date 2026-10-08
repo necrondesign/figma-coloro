@@ -1393,6 +1393,51 @@ const onSample = (bg, fg, fa = 100) => `<span class="sample onbg" style="backgro
 const toneBar = (t, total) => `<span class="tonebar">${["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => t[k]).map((k) =>
   `<i class="t-${k}" style="flex:${t[k]}" title="${esc(TONES[k])}: ${num(t[k])}"></i>`).join("")}</span><small class="muted">${["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => t[k]).map((k) => `${TONES[k]} ${Math.round((t[k] / total) * 100)}%`).join(" · ")}</small>`;
 
+const CSTATUS = { fail: '<span class="tag off">Fails</span>', aa: '<span class="tag near">AA</span>', aaa: '<span class="tag ok">AAA</span>', unknown: '<span class="tag plain">Check by eye</span>' };
+
+/** Сворачиваемый подсписок: строка → её места под ней. */
+function subRows(box, rows, html, places) {
+  box.insertAdjacentHTML("beforeend", rows.map((r, i) => `<div class="srow sub" data-i="${i}">${html(r)}</div>`).join(""));
+  const start = box.querySelectorAll(".srow.sub").length - rows.length;
+  [...box.querySelectorAll(".srow.sub")].slice(start).forEach((row, i) => (row.onclick = (e) => {
+    e.stopPropagation();
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains("subplaces")) { next.remove(); row.classList.remove("open"); return; }
+    row.classList.add("open");
+    const p = document.createElement("div");
+    p.className = "subplaces";
+    row.after(p);
+    places(rows[i], p);
+  }));
+}
+
+/** Что применяется на поверхности: цвета текста с контрастом и компоненты. */
+function surfaceDetail(d, s, box) {
+  const texts = d.contrast.filter((c) => c.bg === s.bg).sort((a, b) => b.uses - a.uses);
+  const comps = s.top_components;
+  const bg = surfCss(s);
+  box.innerHTML = `<div class="sdetail"><div class="row"><span class="label grow">On <b style="color:var(--txt)">${esc(s.name)}</b>: ${pl(texts.reduce((n, t) => n + t.uses, 0), "text")} in ${pl(texts.length, "color")}, ${pl(s.components, "component")}</span>
+    <button class="b sm" data-all>All places</button></div>
+    ${texts.length ? '<div class="sec" style="padding-left:0">Text on this surface</div><div class="slist" data-texts></div>' : ""}
+    ${comps.length ? '<div class="sec" style="padding-left:0">Components on this surface</div><div class="slist" data-comps></div>' : ""}
+    <div class="sall"></div></div>`;
+  box.querySelector("[data-all]").onclick = (e) => {
+    e.stopPropagation();
+    const host = box.querySelector(".sall");
+    if (host.childElementCount) { host.innerHTML = ""; return; }
+    searchPlaces((x) => ({ kind: "surface", bg: x.bg ?? "none" }))(s, host);
+  };
+  if (texts.length) subRows(box.querySelector("[data-texts]"), texts, (t) => `${onSample(bg, t.color, t.alpha)}
+      <div class="name"><b>${esc((t.fg_tokens || [])[0] || "#" + t.color + (t.alpha < 100 ? ` ${t.alpha}%` : ""))}</b><small>${t.large ? "large text" : "normal text"}${t.outline ? " · outlined" : ""}</small></div>
+      <div class="num">${num(t.uses)} <span class="muted">${t.uses === 1 ? "text" : "texts"}</span></div>
+      <div class="what">${CSTATUS[t.status]}${t.ratio != null ? `<b>${t.ratio}:1</b>` : ""}</div>`,
+  searchPlaces((t) => ({ kind: "surface", what: "text", bg: t.bg ?? "none", fg: t.fg })));
+  if (comps.length) subRows(box.querySelector("[data-comps]"), comps, (c) => `<span class="sample">${esc((c.name || "?").slice(0, 1))}</span>
+      <div class="name"><b>${esc(c.name)}</b></div>
+      <div class="num">${num(c.uses)} <span class="muted">${c.uses === 1 ? "place" : "places"}</span></div><div class="what"></div>`,
+  searchPlaces((c) => ({ kind: "surface", what: "component", [c.kind]: c.name, bg: s.bg ?? "none" })));
+}
+
 async function viewSurfaces(el, stale) {
   const sh = S.show.surfaces;
   const d = await api("/api/surfaces" + fq());
@@ -1438,7 +1483,7 @@ async function viewSurfaces(el, stale) {
   const list = $("#list");
   if (sh.view === "contrast") {
     const items = kc(sh.cat).filter((i) => hit(i.color, i.bg_color, i.surface, ...(i.fg_tokens || [])));
-    const tag = { fail: '<span class="tag off">Fails</span>', aa: '<span class="tag near">AA</span>', aaa: '<span class="tag ok">AAA</span>', unknown: '<span class="tag plain">Check by eye</span>' };
+    const tag = CSTATUS;
     rowsWithPlaces(list, items, (i, n) => `<div class="crow" data-n="${n}">${onSample(surfCss({ kind: i.bg_kind, color: i.bg_color }), i.color, i.alpha)}
         <div class="name"><b>${esc((i.fg_tokens || [])[0] || "#" + i.color + (i.alpha < 100 ? ` ${i.alpha}%` : ""))}</b> on <b>${esc(i.surface)}</b><small>${i.large ? "large text" : "normal text"}${i.outline ? ` · outlined <span class="mono">#${esc(i.outline)}</span>` : ""}${i.ratio != null ? ` · needs ${i.need}:1` : ""}</small></div>
         ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "text" })}
@@ -1451,7 +1496,7 @@ async function viewSurfaces(el, stale) {
         <div class="num">${num(s.texts)} <span class="muted">texts</span></div><div class="num c-screens">${num(s.components)} <span class="muted">components</span></div>
         <div class="num c-files">${s.fail ? `<span class="dn">${num(s.fail)} fail</span>` : ""}</div>
         <div class="what"><span class="onrow">${s.text_colors.slice(0, 6).map((c) => onSample(surfCss(s), c.color, c.alpha)).join("")}</span>${s.top_components.slice(0, 3).map((c) => esc(c.name)).join(", ")}</div></div>`,
-    searchPlaces((s) => ({ kind: "surface", bg: s.bg ?? "none" })));
+    (s, box) => surfaceDetail(d, s, box));
   } else {
     const items = d.components.filter((g) => (sh.ccat === "all" || g.unusual_uses) && hit(g.name));
     rowsWithPlaces(list, items, (g, n) => `<div class="crow" data-n="${n}"><span class="sample">${esc((g.name || "?").slice(0, 1))}</span>
@@ -1521,8 +1566,10 @@ function componentsSummary(el, c, det, over) {
 
 async function viewComponents(el, stale) {
   const sh = S.show.components;
-  const [c, det] = await Promise.all([api("/api/components" + fq({ q: sh.q })), api("/api/detached" + fq())]);
+  const [c, det, sf] = await Promise.all([api("/api/components" + fq({ q: sh.q })), api("/api/detached" + fq()),
+    api("/api/surfaces" + fq()).catch(() => null)]);
   if (stale()) return;
+  SURF_OF = Object.fromEntries(((sf && sf.components) || []).map((x) => [x.name, x]));
   const inst = c.items.reduce((n, g) => n + g.instances, 0);
   const over = c.items.filter((g) => g.overridden > 0);
   const cats = [["all", "All", c.items.length], ["overridden", "Overridden", over.length], ["detached", "Possibly detached", det.total]];
@@ -1548,7 +1595,7 @@ async function viewComponents(el, stale) {
   const thumb = (g) => (sh.previews && g.preview ? `<span class="sample kthumb" data-pf="${esc(g.preview[0])}" data-pn="${esc(g.preview[1])}"></span>`
     : '<span class="sample"><svg class="i" viewBox="0 0 16 16"><path d="M8 2 11 5 8 8 5 5zM8 8l3 3-3 3-3-3z"/></svg></span>');
   rowsWithPlaces($("#list"), items, (g, n) => `<div class="crow" data-n="${n}">${thumb(g)}
-      <div class="name">${esc(g.title)}<small>${g.remote ? "Library" : "Local"} · ${Object.keys(g.variants).length ? Object.entries(g.variants).map(([k, vs]) => `${esc(k)}: ${Object.keys(vs).length}`).join(" · ") : "No variants"}</small></div>
+      <div class="name">${esc(g.title)}<small>${g.remote ? "Library" : "Local"} · ${Object.keys(g.variants).length ? Object.entries(g.variants).map(([k, vs]) => `${esc(k)}: ${Object.keys(vs).length}`).join(" · ") : "No variants"}</small>${miniTones(SURF_OF[g.set || g.cname])}</div>
       ${counts({ uses: g.instances, screens: g.screens, files: g.files, unit: "instance" })}
       <div class="what">${g.overridden ? `<span class="tag near">Overridden</span>${pct((g.overridden * 100) / g.instances)} of instances` : '<span class="muted">Not overridden</span>'}</div></div>`,
   (g, box) => openComponent(box, g, {}));
@@ -1615,8 +1662,37 @@ function openComponent(box, g, chosen) {
   // Several variant properties at once go through the combined search.
   const q = { comp: [g.set || g.cname] };
   for (const [k, v] of Object.entries(chosen)) q["prop_" + k] = [v];
-  screensBlock(box.querySelector(".kres"), (offset, limit) => "/api/find" + fq({ ...q, offset, limit }),
-    (gr) => "/api/find/layers" + fq({ ...q, file_key: gr.file_key, screen: gr.screen_id || "" }));
+  componentPlaces(box, g, q);
+}
+
+/* На каких поверхностях стоит компонент — из раздела Surfaces. */
+let SURF_OF = {};
+const miniTones = (x) => (x && x.uses ? `<span class="tonebar mini" title="${esc(["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => x.tones[k]).map((k) => `${TONES[k]} ${Math.round((x.tones[k] / x.uses) * 100)}%`).join(" · "))}">${["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => x.tones[k]).map((k) =>
+  `<i class="t-${k}" style="flex:${x.tones[k]}"></i>`).join("")}</span>` : "");
+
+/** Места компонента: все или только на выбранной поверхности. */
+function componentPlaces(box, g, q) {
+  const x = SURF_OF[g.set || g.cname];
+  const host = box.querySelector(".kres");
+  const ks = document.createElement("div");
+  ks.className = "ksurf";
+  host.before(ks);
+  const show = (bg) => {
+    ks.querySelectorAll("[data-bg]").forEach((b) => b.classList.toggle("on", b.dataset.bg === String(bg)));
+    host.innerHTML = "";
+    if (bg == null) screensBlock(host, (offset, limit) => "/api/find" + fq({ ...q, offset, limit }),
+      (gr) => "/api/find/layers" + fq({ ...q, file_key: gr.file_key, screen: gr.screen_id || "" }));
+    else searchPlaces(() => ({ kind: "surface", what: "component", [g.set ? "set" : "cname"]: g.set || g.cname, bg }))(null, host);
+  };
+  if (x && x.on.length) {
+    ks.innerHTML = `<div class="sec" style="padding-left:0">Stands on${x.unusual.length ? ` · <span class="dn">${x.unusual.map((u) => `${num(u.uses)} on ${TONES[u.tone]}, unusual`).join(", ")}</span>` : ""}</div>
+      <div class="chips" style="padding:0">${x.on.map((o) => `<button class="chip" data-bg="${o.bg ?? "none"}"><span class="sdot" style="background:${surfCss(o)};border:1px solid var(--line)"></span>${esc(o.name)}<em>${num(o.uses)}</em></button>`).join("")}</div>`;
+    ks.querySelectorAll("[data-bg]").forEach((b) => (b.onclick = (e) => {
+      e.stopPropagation();
+      show(b.classList.contains("on") ? null : b.dataset.bg);
+    }));
+  }
+  show(null);
 }
 
 /** Варианты одного набора — как в Figma: переключатели свойств, большое превью выбранного
@@ -1663,8 +1739,7 @@ function openSwitcher(box, g, chosen) {
   else box.querySelector(".kinsp").innerHTML = '<p class="muted">This variant is used only inside other components, so Figma cannot draw it on its own.</p>';
   const q = { comp: [g.set || g.cname] };
   for (const [k, v] of Object.entries(chosen)) q["prop_" + k] = [v];
-  screensBlock(box.querySelector(".kres"), (offset, limit) => "/api/find" + fq({ ...q, offset, limit }),
-    (gr) => "/api/find/layers" + fq({ ...q, file_key: gr.file_key, screen: gr.screen_id || "" }));
+  componentPlaces(box, g, q);
 }
 
 /* ───────────────────── inspector ───────────────────── */
