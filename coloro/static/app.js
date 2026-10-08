@@ -1,4 +1,4 @@
-/* coloro — interface.
+/* Stealer — interface.
    Left panel: projects and files. Right panel: what to look at and what to include.
    Center: results. Both panels collapse into floating buttons that keep showing progress and alerts. */
 
@@ -9,23 +9,30 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const num = (n) => (n == null ? "—" : Number(n).toLocaleString("en-US"));
-const pct = (n) => (n == null ? "—" : (Math.round(n * 10) / 10).toLocaleString("en-US") + "%");
+const LOCALE = I18N.lang === "ru" ? "ru-RU" : "en-US";
+const num = (n) => (n == null ? "—" : Number(n).toLocaleString(LOCALE));
+const pct = (n) => (n == null ? "—" : (Math.round(n * 10) / 10).toLocaleString(LOCALE) + "%");
 const kilo = (n) => (n >= 1e6 ? (Math.round(n / 1e5) / 10) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : String(n || 0));
-const pl = (n, one, many) => `${num(n)} ${n === 1 ? one : many || one + "s"}`;
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** The word for a count, in the interface language: word(2, "color") → "colors" or "цвета". */
+const word = (n, one, many) => I18N.plural(n, one) || (n === 1 ? one : many || one + "s");
+const pl = (n, one, many) => `${num(n)} ${word(n, one, many)}`;
+const MONTHS = I18N.months();
 function day(iso) {
   if (!iso) return "";
   const d = new Date(iso);
   return isNaN(d) ? "" : `${MONTHS[d.getMonth()]} ${d.getDate()}`;
 }
 function ago(iso) {
-  if (!iso) return "never";
+  const ru = I18N.lang === "ru";
+  if (!iso) return ru ? "никогда" : "never";
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  if (s < 86400 * 30) { const d = Math.round(s / 86400); return d === 1 ? "yesterday" : `${d} days ago`; }
+  if (s < 60) return ru ? "только что" : "just now";
+  if (s < 3600) return ru ? `${Math.round(s / 60)} мин назад` : `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return ru ? `${Math.round(s / 3600)} ч назад` : `${Math.round(s / 3600)} h ago`;
+  if (s < 86400 * 30) {
+    const d = Math.round(s / 86400);
+    return d === 1 ? (ru ? "вчера" : "yesterday") : ru ? `${d} ${word(d, "day")} назад` : `${d} days ago`;
+  }
   return day(iso);
 }
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
@@ -212,7 +219,7 @@ function drawProject() {
   };
 }
 function nameForm(menu, value, action, onSave) {
-  menu.innerHTML = `<form class="addform" style="padding:6px"><input class="in" name="n" value="${esc(value)}" placeholder="Project name" maxlength="80" required>
+  menu.innerHTML = `<form class="addform"><input class="in" name="n" value="${esc(value)}" placeholder="Project name" maxlength="80" required>
     <div class="row"><button class="b main">${esc(action)}</button><button type="button" class="b quiet" data-x>Cancel</button></div></form>`;
   const f = menu.querySelector("form");
   f.elements.n.focus(); f.elements.n.select();
@@ -255,14 +262,14 @@ function drawFiles() {
     return `<div class="file ${solo && on ? "solo" : ""}" data-key="${esc(s.file_key)}" data-id="${s.id}">
       <input type="checkbox" ${on ? "checked" : ""} title="Include this file">
       <span class="hd ${fileHealth(s.file_key)}"></span>
-      <span class="n" title="Show only this file"><b>${esc(name)}</b><small>${meta}</small></span>
+      <span class="n" title="Show only this file"><b data-u>${esc(name)}</b><small>${meta}</small></span>
       <span>${hits && hits[s.file_key] ? `<span class="hits">${num(hits[s.file_key])}</span>` : ""}<span class="acts">
         <button class="ib sm" data-act="upd" title="Update this file">${ICON.update}</button>
         <a class="ib sm" href="${esc(s.url)}" target="_blank" rel="noopener" title="Open in Figma">${ICON.open}</a>
         <button class="ib sm" data-act="more" title="More">${ICON.more}</button></span></span>
       ${cur ? `<span class="fbar"><i style="width:${Math.round((cur.index / Math.max(1, cur.total)) * 100)}%"></i></span>` : ""}
     </div>`;
-  }).join("") : `<div class="empty" style="margin:6px;padding:18px"><b>No files yet</b>Add a link to a Figma file.<br><button class="b main" id="emptyAdd">Add file</button></div>`;
+  }).join("") : `<div class="empty small"><b>No files yet</b>Add a link to a Figma file.<br><button class="b main" id="emptyAdd">Add file</button></div>`;
   const ea = $("#emptyAdd");
   if (ea) ea.onclick = () => addFilesDialog();
   $$("#files .file").forEach((row) => {
@@ -285,7 +292,7 @@ function drawFiles() {
       const src = sources().find((s) => String(s.id) === row.dataset.id);
       const m = document.createElement("div");
       m.className = "menu on fmenu";
-      m.innerHTML = `<form class="addform" style="padding:6px"><span class="label">Page name contains</span>
+      m.innerHTML = `<form class="addform"><span class="label">Page name contains</span>
           <input class="in" name="pages" value="${esc((src.pages || []).join(", "))}" placeholder="All pages">
           <div class="row"><button class="b">Save</button></div></form>
         <hr><button data-x="force">Reload from scratch</button><button data-x="remove" class="danger">Remove from project</button>`;
@@ -693,7 +700,7 @@ async function screensBlock(box, groupsUrl, layersUrl, emptyHint, offset = 0) {
   }
   const start = box.querySelectorAll(".scr").length;
   box.insertAdjacentHTML("beforeend", d.items.map((g, n) => {
-    const layers = g.layers.map(esc).join(", ") + (g.more_layers ? ` and ${num(g.more_layers)} more` : "");
+    const layers = `<span data-u>${g.layers.map(esc).join(", ")}</span>` + (g.more_layers ? ` ${I18N.lang === "ru" ? "и ещё" : "and"} ${num(g.more_layers)} ${I18N.lang === "ru" ? "" : "more"}` : "");
     return `<div class="scr" data-n="${start + n}">
       <div class="path">${esc(g.file)}<span class="sep">›</span>${esc(g.page)}<span class="sep">›</span><b>${esc(g.screen)}</b></div>
       <div class="cnt">${pl(g.count, "match", "matches")} · ${layers}</div>
@@ -720,7 +727,7 @@ async function screensBlock(box, groupsUrl, layersUrl, emptyHint, offset = 0) {
       h.after(lb);
       try {
         const r = await api(layersUrl(g));
-        lb.innerHTML = r.items.map(layerLine).join("") + (r.total > r.items.length ? `<div class="muted" style="padding:5px 8px">and ${num(r.total - r.items.length)} more</div>` : "");
+        lb.innerHTML = r.items.map(layerLine).join("") + (r.total > r.items.length ? `<div class="muted more-line">and ${num(r.total - r.items.length)} more</div>` : "");
         bindTips(lb, r.items);
       } catch (err) { lb.innerHTML = `<div class="error">${esc(err.message)}</div>`; }
     };
@@ -770,9 +777,9 @@ const searchPlaces = (base) => (it, box) => screensBlock(box,
   (offset, limit) => "/api/search" + fq({ ...base(it), offset, limit }),
   (g) => "/api/search" + fq({ ...base(it), file_key: g.file_key, screen: g.screen_id || "" }));
 const counts = (n) => `
-  <div class="num">${num(n.uses)} <span class="muted">${n.uses === 1 ? n.unit : n.units || n.unit + "s"}</span></div>
-  <div class="num c-screens">${num(n.screens)} <span class="muted">${n.screens === 1 ? "screen" : "screens"}</span></div>
-  <div class="num c-files">${num(n.files)} <span class="muted">${n.files === 1 ? "file" : "files"}</span></div>`;
+  <div class="num">${num(n.uses)} <span class="muted">${word(n.uses, n.unit, n.units)}</span></div>
+  <div class="num c-screens">${num(n.screens)} <span class="muted">${word(n.screens, "screen")}</span></div>
+  <div class="num c-files">${num(n.files)} <span class="muted">${word(n.files, "file")}</span></div>`;
 const colorPlaces = (c, a) => (it, box) => screensBlock(box,
   (offset, limit) => "/api/screens" + fq({ color: c(it), alpha: a(it), offset, limit }),
   (g) => "/api/places" + fq({ color: c(it), alpha: a(it), file_key: g.file_key, screen: g.screen_id || "" }));
@@ -817,7 +824,7 @@ function spark(values, good) {
 async function viewEmpty(el) {
   const p = project();
   if (!sources().length) {
-    el.innerHTML = `<div class="empty"><b>Add a Figma file to ${esc(p ? p.name : "this project")}</b>Paste a link to a file. coloro loads it and shows what follows the design system and what does not.<br><button class="b main" id="ovAdd">Add files</button></div>`;
+    el.innerHTML = `<div class="empty"><b>Add a Figma file to ${esc(p ? p.name : "this project")}</b>Paste a link to a file. Stealer loads it and shows what follows the design system and what does not.<br><button class="b main" id="ovAdd">Add files</button></div>`;
     $("#ovAdd").onclick = () => addFilesDialog();
     return;
   }
@@ -917,7 +924,7 @@ const colorViews = () => {
   const themes = projectThemes();
   const theme = themes.includes(S.themes[S.project]) ? S.themes[S.project] : "";
   return seg([["colors", "Colors"], ["gradients", "Gradients"], ["contrast", "Contrast"], ["surfaces", "Surfaces"]], S.show.colors.view, "cview")
-    + (themes.length > 1 ? `<div class="field" style="margin-top:8px"><span class="label">Compare with theme</span>${select("theme", [["", "All themes"], ...themes.map((m) => [m, modeName(m)])], theme)}</div>` : "");
+    + (themes.length > 1 ? `<div class="field"><span class="label">Compare with theme</span>${select("theme", [["", "All themes"], ...themes.map((m) => [m, modeName(m)])], theme)}</div>` : "");
 };
 function bindColorViews(root) {
   root.querySelectorAll("[data-cview]").forEach((b) => (b.onclick = () => { S.show.colors.view = b.dataset.cview; save(); route(); }));
@@ -950,7 +957,7 @@ async function viewColors(el, stale) {
   $("#tname").innerHTML = `Colors<span>${pl(d.items.length, "color")}</span>`;
   drawShow(`${colorViews()}
     <div class="sec">Status</div>${chips(cats.map(([k, t]) => [k, t, base.filter((i) => inFamily(i) && inCat(i, k, rare)).length]), sh.cat)}
-    <div class="field" style="margin-top:6px"><span class="label">Where it is used</span>${select("usage", [["all", "Fills, strokes and gradients"], ["fills", "Fills and strokes only"], ["gradients", "Gradients only"], ["both", "Both"]], sh.usage)}</div>
+    <div class="field"><span class="label">Where it is used</span>${select("usage", [["all", "Fills, strokes and gradients"], ["fills", "Fills and strokes only"], ["gradients", "Gradients only"], ["both", "Both"]], sh.usage)}</div>
     <div class="field"><span class="label">Sort by</span>${select("sort", [["uses", "Most used"], ["files", "Number of files"], ["light", "Lightness"], ["family", "Color family"]], sh.sort)}</div>
     ${sh.cat === "rare" ? `<div class="field"><span class="label">Rare means used at most</span>${select("rare", [[2, "2 times"], [5, "5 times"], [10, "10 times"]], rare)}</div>` : ""}
     <div class="field"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Hex, token or file name"></div>
@@ -984,7 +991,7 @@ async function viewColors(el, stale) {
         { n: off.length, title: `Review ${pl(off.length, "off-system color")}`, text: `Far from every token${fam ? `, mostly ${fam}` : ""}. Add the needed ones to the system and replace the rest.`, go: goCat("off") },
         { n: rr.length, title: `Check ${pl(rr.length, "rare color")}`, text: `Used ${rare === 2 ? "once or twice" : `at most ${rare} times`}. Often a typo or a leftover.`, go: goCat("rare") },
         ...(d.library === "files" ? [{ always: true, title: "Load the token library for exact names", text: "The system is now taken from styles and variables in the files. A library adds variable names and catches tokens nobody uses yet.", go: openSettings, label: "Open settings" }] : []),
-      ] : [{ always: true, title: "Load the token library", text: "Without it coloro cannot tell which colors are outside the design system.", go: openSettings, label: "Open settings" }],
+      ] : [{ always: true, title: "Load the token library", text: "Without it Stealer cannot tell which colors are outside the design system.", go: openSettings, label: "Open settings" }],
       file: d.tokens ? { key: "stray", title: "stray colors" } : { key: "raw_pct", title: "set by hand", pct: true },
       history: ["bound_pct", "stray", "raw_pct"],
     });
@@ -1008,7 +1015,7 @@ async function viewGradients(el, stale) {
   items.sort(sorters[sh.sort] || sorters.uses);
   $("#tname").innerHTML = `Colors<span>${pl(d.items.length, "gradient")}</span>`;
   drawShow(`${colorViews()}
-    <div class="field" style="margin-top:8px"><span class="label">Sort by</span>${select("sort", [["uses", "Most used"], ["files", "Number of files"], ["stops", "Number of stops"]], sh.sort)}</div>
+    <div class="field"><span class="label">Sort by</span>${select("sort", [["uses", "Most used"], ["files", "Number of files"], ["stops", "Number of stops"]], sh.sort)}</div>
     <div class="field"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Stop color hex"></div>`,
   (root) => { bindShow(root, "gradients", () => route()); bindColorViews(root); });
   el.innerHTML = `<div class="head"><div class="grow"><h1>Gradients</h1><p class="sub">Each recipe (type and stops in order) is one row. ${pl(items.length, "gradient")} · ${pl(items.reduce((n, g) => n + g.uses, 0), "use")}</p></div></div><div class="list" id="list"></div>`;
@@ -1076,7 +1083,7 @@ async function viewTokensPage(el, stale) {
   const cats = [["all", "All"], ["used", "Used in files"], ["unused", "Unused"], ["byhand", "Set by hand"], ...(modes.length > 1 ? [["themed", "Change with theme"]] : []), ["empty", "No value"]];
   drawShow(`<div class="sec">Type</div>${chips(typeCounts, sh.type, "ttype")}
     <div class="sec">Usage</div>${chips(cats.map(([k, t]) => [k, t, inColl.filter((x) => (sh.type === "all" || kind(x) === sh.type) && usage(x, k)).length]), sh.cat)}
-    <div class="field" style="margin-top:6px"><span class="label">Sort by</span>${select("sort", [["name", "Group and name"], ["uses", "Most used in files"]], sh.sort || "name")}</div>
+    <div class="field"><span class="label">Sort by</span>${select("sort", [["name", "Group and name"], ["uses", "Most used in files"]], sh.sort || "name")}</div>
     <div class="field"><span class="label">Find</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Name or value"></div>`,
   (root) => {
     bindShow(root, "tokens", () => route());
@@ -1112,7 +1119,7 @@ async function viewTokensPage(el, stale) {
     const head = byName && g !== lastGroup ? `<tr class="tgroup"><td colspan="${cols.length + (exactCols ? 4 : 3)}">${esc(g || "No group")}</td></tr>` : "";
     lastGroup = g;
     const icon = t.type === "color" ? `<span class="sw2" style="background:#${(t.values[0] || {}).color || "transparent"}"></span>` : TYPE_ICON[kind(t)] || TYPE_ICON.other;
-    return `${head}<tr class="trow" data-n="${n}"><td class="tname">${icon}<span title="${esc(t.name)}">${esc(byName ? t.name.slice(g ? g.length + 1 : 0) : t.name)}</span>${t.scope && t.scope !== "ALL_SCOPES" ? `<span class="muted tscope">${esc(t.scope.toLowerCase().replace(/_/g, " "))}</span>` : ""}</td>
+    return `${head}<tr class="trow" data-n="${n}"><td class="tname">${icon}<span data-u title="${esc(t.name)}">${esc(byName ? t.name.slice(g ? g.length + 1 : 0) : t.name)}</span>${t.scope && t.scope !== "ALL_SCOPES" ? `<span class="muted tscope">${esc(t.scope.toLowerCase().replace(/_/g, " "))}</span>` : ""}</td>
       ${cols.map((m) => `<td>${cellFor(t, m)}</td>`).join("")}
       ${exactCols ? `<td class="num">${t.type === "color" ? (t.bound ? num(t.bound) : '<span class="muted">0</span>') : t.uses ? num(t.uses) : '<span class="muted">0</span>'}</td>
         <td class="num">${t.raw ? num(t.raw) : '<span class="muted">—</span>'}</td>`
@@ -1146,7 +1153,7 @@ async function viewTokensPage(el, stale) {
     const colorVals = t.values.filter((v) => v.color && v.uses);
     if (colorVals.length) {
       const show = (v) => {
-        box.innerHTML = (t.values.length > 1 ? `<div class="vchips" style="margin-left:0">${t.values.map((x, i) => `<button class="chip ${x === v ? "on" : ""}" data-vi="${i}" ${x.uses ? "" : "disabled"}>${esc(modeName(x.mode) || "Value")} · #${esc(x.color)}<em>${num(x.uses)}</em></button>`).join("")}</div>` : "") + '<div class="tres"></div>';
+        box.innerHTML = (t.values.length > 1 ? `<div class="vchips flush">${t.values.map((x, i) => `<button class="chip ${x === v ? "on" : ""}" data-vi="${i}" ${x.uses ? "" : "disabled"}>${esc(modeName(x.mode) || "Value")} · #${esc(x.color)}<em>${num(x.uses)}</em></button>`).join("")}</div>` : "") + '<div class="tres"></div>';
         box.querySelectorAll("[data-vi]").forEach((b) => (b.onclick = (e) => { e.stopPropagation(); show(t.values[+b.dataset.vi]); }));
         colorPlaces(() => v.color, () => v.alpha)(t, box.querySelector(".tres"));
       };
@@ -1157,7 +1164,7 @@ async function viewTokensPage(el, stale) {
       const group = kinds.includes("radius") ? "radius" : kinds.includes("stroke") && kinds.length === 1 ? "stroke" : "spacing";
       searchPlaces(() => ({ kind: "prop", group, value: String(v.value).replace("px", "") }))(t, box);
     } else {
-      box.innerHTML = `<p class="muted" style="padding:6px 0">${t.empty ? "The library file has no value for this token, so it cannot be compared with the files." : "This token’s value is not used in the selected files."}</p>`;
+      box.innerHTML = `<p class="muted">${t.empty ? "The library file has no value for this token, so it cannot be compared with the files." : "This token’s value is not used in the selected files."}</p>`;
     }
   }));
   {
@@ -1264,10 +1271,10 @@ async function viewText(el, stale) {
   $("#tname").innerHTML = `Text<span>${pl(d.total, "text")}</span>`;
   drawShow(`<div class="field"><span class="label">Find text</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Word or phrase"></div>
     ${seg([["forms", "Any word form"], ["exact", "Exact phrase"]], sh.mode === "exact" ? "exact" : "forms", "tmode")}
-    <div class="checks" style="margin-top:6px"><label><input type="checkbox" data-twhole ${sh.whole ? "checked" : ""}>Whole words only</label>
+    <div class="checks"><label><input type="checkbox" data-twhole ${sh.whole ? "checked" : ""}>Whole words only</label>
       ${sh.mode === "exact" ? "" : fuzzyChecks(sh.typos, !sh.nolayout)}</div>
     <div class="sec">Show</div>${chips(XCATS.map(([k, t]) => [k, t, d.counts[k]]), sh.cat)}
-    <div class="field" style="margin-top:6px"><span class="label">Sort by</span>${select("sort", [["uses", "Most used"], ["screens", "Number of screens"], ["long", "Longest first"], ["az", "A to Z"]], sh.sort)}</div>`,
+    <div class="field"><span class="label">Sort by</span>${select("sort", [["uses", "Most used"], ["screens", "Number of screens"], ["long", "Longest first"], ["az", "A to Z"]], sh.sort)}</div>`,
   (root) => {
     bindShow(root, "text", () => route());
     root.querySelectorAll("[data-tmode]").forEach((b) => (b.onclick = () => { sh.mode = b.dataset.tmode; save(); route(); }));
@@ -1290,7 +1297,7 @@ async function viewText(el, stale) {
     });
   }
   rowsWithPlaces($("#list"), items, (i, n) => `<div class="crow" data-n="${n}"><span class="sample fsample">Aa</span>
-      <div class="name" title="${esc(i.text)}">${esc(i.text)}<small>${i.variants > 1 ? `${pl(i.variants, "spelling")} · ` : ""}${i.in_instances ? `${num(i.in_instances)} inside instances · ` : ""}${i.first_seen ? "since " + esc(day(i.first_seen)) : ""}</small></div>
+      <div class="name"><span data-u title="${esc(i.text)}">${esc(i.text)}</span><small>${i.variants > 1 ? `${pl(i.variants, "spelling")} · ` : ""}${i.in_instances ? `${num(i.in_instances)} inside instances · ` : ""}${i.first_seen ? "since " + esc(day(i.first_seen)) : ""}</small></div>
       ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "place" })}
       <div class="what">${i.unstyled ? `<span class="tag unbound">No style</span>${num(i.unstyled)} of ${num(i.uses)}` : '<span class="tag ok">Styled or in instances</span>'}</div></div>`,
   searchPlaces((i) => ({ kind: "textexact", text: i.text })));
@@ -1431,8 +1438,8 @@ function surfaceDetail(d, s, box) {
   const bg = surfCss(s);
   box.innerHTML = `<div class="sdetail"><div class="row"><span class="label grow">On <b style="color:var(--txt)">${esc(s.name)}</b>: ${pl(texts.reduce((n, t) => n + t.uses, 0), "text")} in ${pl(texts.length, "color")}, ${pl(s.components, "component")}</span>
     <button class="b sm" data-all>All places</button></div>
-    ${texts.length ? '<div class="sec" style="padding-left:0">Text on this surface</div><div class="slist" data-texts></div>' : ""}
-    ${comps.length ? '<div class="sec" style="padding-left:0">Components on this surface</div><div class="slist" data-comps></div>' : ""}
+    ${texts.length ? '<div class="sec">Text on this surface</div><div class="slist" data-texts></div>' : ""}
+    ${comps.length ? '<div class="sec">Components on this surface</div><div class="slist" data-comps></div>' : ""}
     <div class="sall"></div></div>`;
   box.querySelector("[data-all]").onclick = (e) => {
     e.stopPropagation();
@@ -1458,7 +1465,7 @@ async function viewSurfaces(el, stale) {
   if (!d.surfaces.length) {
     $("#tname").innerHTML = "Colors";
     drawShow(colorViews(), bindColorViews);
-    el.innerHTML = `<div class="empty"><b>Surfaces are not computed yet</b>coloro finds what each layer lies on while loading a file. Files loaded with an older version need one update.<br><button class="b main" id="sfUpd">Update</button></div>`;
+    el.innerHTML = `<div class="empty"><b>Surfaces are not computed yet</b>Stealer finds what each layer lies on while loading a file. Files loaded with an older version need one update.<br><button class="b main" id="sfUpd">Update</button></div>`;
     $("#sfUpd").onclick = () => startUpdate({ project: S.project });
     return;
   }
@@ -1468,8 +1475,8 @@ async function viewSurfaces(el, stale) {
   const kc = (k) => d.contrast.filter((i) => k === "all" || i.status === k);
   drawShow(`${colorViews()}
     ${view === "contrast" ? `<div class="sec">Status</div>${chips(KCATS.map(([k, t]) => [k, t, kc(k).reduce((n, i) => n + i.uses, 0)]), sh.cat)}` : ""}
-    <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Hex, token, style or component"></div>
-    <p class="label" style="padding:6px;margin:0">The surface is what a layer lies on: the fill of the nearest frame or of a plate under it. Translucent fills are mixed with what is below, as the eye sees them.</p>`,
+    <div class="field"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Hex, token, style or component"></div>
+    <p class="hint">The surface is what a layer lies on: the fill of the nearest frame or of a plate under it. Translucent fills are mixed with what is below, as the eye sees them.</p>`,
   (root) => {
     bindShow(root, "surfaces", () => route());
     bindColorViews(root);
@@ -1504,8 +1511,8 @@ async function viewSurfaces(el, stale) {
     const items = d.surfaces.filter((s) => hit(s.color, s.name, ...(s.tokens || []), ...s.top_components.map((c) => c.name)));
     rowsWithPlaces(list, items, (s, n) => `<div class="crow" data-n="${n}"><span class="sample" style="background:${surfCss(s)};border:1px solid var(--line)"></span>
         <div class="name"><b>${esc(s.name)}</b><small>${s.kind === "solid" ? `<span class="mono">#${esc(s.color)}${s.alpha < 100 ? " " + s.alpha + "%" : ""}</span> · ${s.src ? (s.src === "v" ? "variable" : "style") : (s.tokens || []).length ? "token value set by hand" : "set by hand"} · ${esc(TONES[s.tone])}` : esc(TONES[s.tone])}</small></div>
-        <div class="num">${num(s.texts)} <span class="muted">texts</span></div><div class="num c-screens">${num(s.components)} <span class="muted">${s.components === 1 ? "component" : "components"}</span></div>
-        <div class="num c-files">${s.fail ? `<span class="dn">${num(s.fail)} fail</span>` : ""}</div>
+        <div class="num">${num(s.texts)} <span class="muted">${word(s.texts, "text")}</span></div><div class="num c-screens">${num(s.components)} <span class="muted">${word(s.components, "component")}</span></div>
+        <div class="num c-files">${s.fail ? `<span class="dn">${num(s.fail)} ${I18N.lang === "ru" ? "не проходят" : "fail"}</span>` : ""}</div>
         <div class="what"><span class="onrow">${s.text_colors.slice(0, 6).map((c) => onSample(surfCss(s), c.color, c.alpha)).join("")}</span>${s.top_components.slice(0, 3).map((c) => esc(c.name)).join(", ")}</div></div>`,
     (s, box) => surfaceDetail(d, s, box));
   }
@@ -1525,7 +1532,7 @@ const initial = (s) => esc(((s || "?").trim()[0] || "?").toUpperCase());
 const daysText = (n) => (n == null ? "" : n === 0 ? "today" : `${num(n)} ${n === 1 ? "day" : "days"}`);
 
 function threadRow(t, n) {
-  const state = t.open ? (t.stale ? '<span class="tag off">Open, old</span>' : t.replies.length ? '<span class="tag near">Open</span>' : '<span class="tag near">No reply</span>')
+  const state = t.open ? (t.stale ? '<span class="tag off">Open, old</span>' : t.replies.length ? `<span class="tag near">${I18N.lang === "ru" ? "Открыто" : "Open"}</span>` : '<span class="tag near">No reply</span>')
     : '<span class="tag ok">Resolved</span>';
   return `<div class="crow" data-n="${n}"><span class="sample avatar">${initial(t.author)}</span>
     <div class="name"><span class="msg">${esc(t.message)}</span><small>${esc(t.author)} · ${esc(ago(t.created_at))}${t.screen ? ` · ${esc(t.page || "")} › ${esc(t.screen)}` : ""}${t.replies.length ? ` · ${pl(t.replies.length, "reply", "replies")}` : ""}${t.people.length > 1 ? ` · ${pl(t.people.length, "person", "people")}` : ""}</small></div>
@@ -1556,11 +1563,11 @@ async function viewComments(el, stale) {
   const items = base.filter((t) => inMCat(t, sh.cat)).sort(MSORTS[sh.sort] || MSORTS.newest);
   $("#tname").innerHTML = `Comments<span>${pl(T.open, "open thread")}</span>`;
   drawShow(`<div class="sec">Show</div>${chips(MCATS.map(([k, t]) => [k, t, base.filter((x) => inMCat(x, k)).length]), sh.cat)}
-    <div class="field" style="margin-top:6px"><span class="label">Sort by</span>${select("sort", [["newest", "Newest first"], ["oldest", "Oldest first"], ["quiet", "Longest without a reply"], ["replies", "Most replies"]], sh.sort)}</div>
+    <div class="field"><span class="label">Sort by</span>${select("sort", [["newest", "Newest first"], ["oldest", "Oldest first"], ["quiet", "Longest without a reply"], ["replies", "Most replies"]], sh.sort)}</div>
     <div class="field"><span class="label">Person</span>${select("author", [["", "Everyone"], ...d.authors.map((a) => [a.name, `${a.name} · ${a.open} open`])], sh.author)}</div>
     ${d.files.length > 1 ? `<div class="field"><span class="label">File</span>${select("file", [["", "All files"], ...d.files.map((f) => [f, f])], sh.file)}</div>` : ""}
     <div class="tg" data-group><span>Group by screen</span><span class="sw ${sh.group ? "on" : ""}" role="switch" aria-checked="${sh.group}"></span></div>
-    <div class="field" style="margin-top:6px"><span class="label">Find in comments</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Text, person, screen"></div>`,
+    <div class="field"><span class="label">Find in comments</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Text, person, screen"></div>`,
   (root) => {
     bindShow(root, "comments", () => route());
     root.querySelector("[data-group]").onclick = () => { sh.group = !sh.group; save(); route(); };
@@ -1675,9 +1682,9 @@ async function viewComponents(el, stale) {
   const cats = [["all", "All", c.items.length], ["overridden", "Overridden", over.length], ["unusual", "On an unusual surface", odd.length], ["detached", "Possibly detached", det.total]];
   $("#tname").innerHTML = `Components<span>${pl(inst, "instance")}</span>`;
   drawShow(`<div class="sec">Show</div>${chips(cats, sh.cat)}
-    <div class="field" style="margin-top:6px"><span class="label">Component or set name</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="All components"></div>
+    <div class="field"><span class="label">Component or set name</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="All components"></div>
     <div class="tg" data-prev><span>Show previews</span><span class="sw ${sh.previews ? "on" : ""}" role="switch" aria-checked="${sh.previews}"></span></div>
-    <p class="label" style="padding:0 6px;margin:0">Figma draws each variant. The first time takes a few seconds.</p>`,
+    <p class="hint">Figma draws each variant. The first time takes a few seconds.</p>`,
   (root) => {
     bindShow(root, "components", () => route());
     root.querySelector("[data-prev]").onclick = () => { sh.previews = !sh.previews; save(); route(); };
@@ -1697,7 +1704,7 @@ async function viewComponents(el, stale) {
   const thumb = (g) => (sh.previews && g.preview ? `<span class="sample kthumb" data-pf="${esc(g.preview[0])}" data-pn="${esc(g.preview[1])}"></span>`
     : '<span class="sample"><svg class="i" viewBox="0 0 16 16"><path d="M8 2 11 5 8 8 5 5zM8 8l3 3-3 3-3-3z"/></svg></span>');
   rowsWithPlaces($("#list"), items, (g, n) => `<div class="crow" data-n="${n}">${thumb(g)}
-      <div class="name">${esc(g.title)}<small>${g.remote ? "Library" : "Local"} · ${Object.keys(g.variants).length ? Object.entries(g.variants).map(([k, vs]) => `${esc(k)}: ${Object.keys(vs).length}`).join(" · ") : "No variants"}</small>${miniTones(SURF_OF[g.set || g.cname])}</div>
+      <div class="name"><span data-u>${esc(g.title)}</span><small>${g.remote ? "Library" : "Local"} · ${Object.keys(g.variants).length ? Object.entries(g.variants).map(([k, vs]) => `${esc(k)}: ${Object.keys(vs).length}`).join(" · ") : "No variants"}</small>${miniTones(SURF_OF[g.set || g.cname])}</div>
       ${counts({ uses: g.instances, screens: g.screens, files: g.files, unit: "instance" })}
       <div class="what">${sh.cat === "unusual" ? SURF_OF[g.set || g.cname].unusual.map((u) => `<span class="tag near">Unusual</span><b>${num(u.uses)}</b> on ${esc(TONES[u.tone])}`).join(" ")
         : g.overridden ? `<span class="tag near">Overridden</span>${pct((g.overridden * 100) / g.instances)} of instances` : '<span class="muted">Not overridden</span>'}</div></div>`,
@@ -1748,12 +1755,12 @@ function requestPreviews(list) {
 }
 function setPreview(el, url) {
   el.classList.remove("waiting");
-  el.innerHTML = url ? `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="muted" style="font-size:10px">—</span>';
+  el.innerHTML = url ? `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="muted">—</span>';
 }
 
 function openComponent(box, g, chosen) {
   if (S.show.components.previews && g.components.some((c) => c.preview)) return openSwitcher(box, g, chosen);
-  const facets = Object.entries(g.variants).map(([k, vs]) => `<div class="vchips" style="margin-left:0"><span class="label" style="margin-right:4px">${esc(k)}</span>
+  const facets = Object.entries(g.variants).map(([k, vs]) => `<div class="vchips flush"><span class="label">${esc(k)}</span>
     ${Object.entries(vs).sort((a, b) => b[1] - a[1]).map(([v, n]) => `<button class="chip ${chosen[k] === v ? "on" : ""}" data-k="${esc(k)}" data-v="${esc(v)}">${esc(v)}<em>${num(n)}</em></button>`).join("")}</div>`).join("");
   box.innerHTML = `${facets}<div class="kres"></div>`;
   box.querySelectorAll("[data-k]").forEach((b) => (b.onclick = (e) => {
@@ -1787,8 +1794,8 @@ function componentPlaces(box, g, q) {
     else searchPlaces(() => ({ kind: "surface", what: "component", [g.set ? "set" : "cname"]: g.set || g.cname, bg }))(null, host);
   };
   if (x && x.on.length) {
-    ks.innerHTML = `<div class="sec" style="padding-left:0">Stands on${x.unusual.length ? ` · <span class="dn">${x.unusual.map((u) => `${num(u.uses)} on ${TONES[u.tone]}, unusual`).join(", ")}</span>` : ""}</div>
-      <div class="chips" style="padding:0">${x.on.map((o) => `<button class="chip" data-bg="${o.bg ?? "none"}"><span class="sdot" style="background:${surfCss(o)};border:1px solid var(--line)"></span>${esc(o.name)}<em>${num(o.uses)}</em></button>`).join("")}</div>`;
+    ks.innerHTML = `<div class="sec">Stands on${x.unusual.length ? ` · <span class="dn">${x.unusual.map((u) => `${num(u.uses)} on ${TONES[u.tone]}, unusual`).join(", ")}</span>` : ""}</div>
+      <div class="chips">${x.on.map((o) => `<button class="chip" data-bg="${o.bg ?? "none"}"><span class="sdot" style="background:${surfCss(o)};border:1px solid var(--line)"></span>${esc(o.name)}<em>${num(o.uses)}</em></button>`).join("")}</div>`;
     ks.querySelectorAll("[data-bg]").forEach((b) => (b.onclick = (e) => {
       e.stopPropagation();
       show(b.classList.contains("on") ? null : b.dataset.bg);
@@ -1814,15 +1821,15 @@ function openSwitcher(box, g, chosen) {
   const label = (v) => Object.keys(v.props).length ? Object.entries(v.props).map(([k, val]) => `${k}: ${val}`).join(" · ") : v.name || g.title;
   box.innerHTML = `<div class="kinsp"></div><div class="kswitch">
       <div>
-        ${props.map(([k, vs]) => `<div class="kprop"><span class="label">${esc(k)}</span><div class="chips" style="padding:0">
+        ${props.map(([k, vs]) => `<div class="kprop"><span class="label">${esc(k)}</span><div class="chips">
           ${Object.entries(vs).sort((a, b) => b[1] - a[1]).map(([v, n]) => {
             const possible = variants.some((x) => x.props[k] === v && Object.entries(chosen).every(([ck, cv]) => ck === k || x.props[ck] === cv));
             return `<button class="chip ${chosen[k] === v ? "on" : ""}" data-k="${esc(k)}" data-v="${esc(v)}" ${possible ? "" : 'style="opacity:.45"'}>${esc(v)}<em>${num(n)}</em></button>`;
           }).join("")}</div></div>`).join("")}
-        <p class="label" style="margin:8px 0 0">${matching.length ? `<b style="color:var(--txt)">${esc(label(shown))}</b> · ${pl(matching.reduce((n, v) => n + v.count, 0), "instance")}${matching.length > 1 ? ` in ${pl(matching.length, "variant")}` : ""}`
+        <p class="hint">${matching.length ? `<b style="color:var(--txt)">${esc(label(shown))}</b> · ${pl(matching.reduce((n, v) => n + v.count, 0), "instance")}${matching.length > 1 ? ` in ${pl(matching.length, "variant")}` : ""}`
           : "No variant with this combination is used in the selected files."}${Object.keys(chosen).length ? ' · <button class="link" data-reset>Reset</button>' : ""}</p>
       </div></div>
-    ${variants.length > 1 ? `<div class="sec" style="padding-left:0">All variants in use · ${num(variants.length)}</div>
+    ${variants.length > 1 ? `<div class="sec">All variants in use · ${num(variants.length)}</div>
     <div class="vgrid">${variants.slice(0, 120).map((v, i) => `<button class="vcard ${matching.includes(v) && Object.keys(chosen).length ? "on" : ""}" data-vi="${i}">
       <span class="sample" ${v.preview ? `data-pf="${esc(v.preview[0])}" data-pn="${esc(v.preview[1])}"` : ""}></span>
       <span class="vl">${esc(label(v))}</span><span class="muted">${pl(v.count, "instance")}</span></button>`).join("")}</div>` : ""}
@@ -1943,7 +1950,7 @@ function layerPanel(l, d) {
   const kids = d.layers.filter((k) => k.p === l.i);
   return `${rows.join("")}
     <div class="kp-acts"><button class="b sm" data-css>${ICON.copy}Copy CSS</button>${parent ? `<button class="b sm quiet" data-li="${parent.i}">Select parent</button>` : ""}</div>
-    ${kids.length ? `<div class="kp-k" style="margin-top:8px">Layers inside</div><div class="kp-kids">${kids.slice(0, 30).map((k) => `<button class="link" data-li="${k.i}">${esc(k.name)}</button>`).join("")}</div>` : ""}`;
+    ${kids.length ? `<div class="kp-k">Layers inside</div><div class="kp-kids">${kids.slice(0, 30).map((k) => `<button class="link" data-li="${k.i}">${esc(k.name)}</button>`).join("")}</div>` : ""}`;
 }
 function layerCss(l) {
   const css = [`width: ${l.w}px;`, `height: ${l.h}px;`];
@@ -1996,9 +2003,9 @@ async function viewSearch(el, stale) {
   drawShow(`${s.q ? `<div class="sec">Search text in</div><div class="checks" data-where>
       ${[["text", "Text layers"], ["name", "Layer and frame names"], ["component", "Component names"], ["page", "Page and file names"]].map(([k, t]) => `<label><input type="checkbox" value="${k}" ${where.includes(k) ? "checked" : ""}>${t}</label>`).join("")}</div>
     <div class="sec">Match</div>${seg([["forms", "Any word form"], ["exact", "Exact phrase"]], s.mode === "exact" ? "exact" : "forms", "mode")}
-    <div class="checks" style="margin-top:6px"><label><input type="checkbox" data-whole ${s.whole ? "checked" : ""}>Whole words only</label>
+    <div class="checks"><label><input type="checkbox" data-whole ${s.whole ? "checked" : ""}>Whole words only</label>
       ${s.mode === "exact" ? "" : fuzzyChecks(s.typos, !s.nolayout)}</div>
-    <p class="label" style="padding:6px;margin:0">${s.mode === "exact" ? "The words in this order, as written. Case and ё are ignored." : "All words in any form and any order: “buy coins” finds “Buy 100 coins”."}
+    <p class="hint">${s.mode === "exact" ? "The words in this order, as written. Case and ё are ignored." : "All words in any form and any order: “buy coins” finds “Buy 100 coins”."}
       ${s.whole ? (s.mode === "exact" ? " Not as part of a longer word." : " A word must be a form of the query word: “cat” finds “cats”, not “catalog”.") : " Also finds the query inside longer words."}</p>` : ""}
     <div class="field"><span class="label">Size tolerance, px</span><input class="in" data-o="tol" value="${esc(s.tol || "")}" placeholder="0.5" inputmode="decimal"></div>
     ${facet("Type", "type", d.facets.type, (v) => TYPE_NAMES[v] || v)}
@@ -2041,7 +2048,7 @@ function dialog(title, html) {
 const closeDialog = () => { $("#veil").hidden = true; };
 
 const TOKEN_WHY = `A link only says which file to read. Figma gives the file’s data through its API only with a personal access token,
-  the same way it checks your access when you open the file. coloro reads files with your token; it never changes them.
+  the same way it checks your access when you open the file. Stealer reads files with your token; it never changes them.
   Create one in Figma: Settings → Security → Personal access tokens, with read access to file content and comments.`;
 
 function newProjectDialog() {
@@ -2056,7 +2063,7 @@ function newProjectDialog() {
       ${needToken ? `<div class="f"><span class="label">Figma access token</span><input class="in" type="password" name="token" placeholder="figd_…" autocomplete="off">
         <span class="hint">${TOKEN_WHY}</span></div>` : ""}
       <div class="f"><span class="label">Token library</span><input class="in" type="file" name="lib" accept=".json,.csv,.txt,application/json,text/csv">
-        <span class="hint">Optional. The design system’s color tokens: W3C Design Tokens, Tokens Studio, a variables export or a CSV with name and value columns. With it, coloro finds colors outside the system.</span></div>
+        <span class="hint">Optional. The design system’s color tokens: W3C Design Tokens, Tokens Studio, a variables export or a CSV with name and value columns. With it, Stealer finds colors outside the system.</span></div>
       <div class="acts"><button type="button" class="b quiet" id="npCancel">Cancel</button><button class="b main">Create project</button></div>
     </form>`);
   $("#npCancel").onclick = closeDialog;
@@ -2093,19 +2100,22 @@ function openSettings() {
   const st = S.st, p = project();
   const t = p.tokens;
   dialog("Settings", `
+    <h4>Interface language</h4>
+    <div class="seg flush" id="langSeg"><button data-lang="en" class="${I18N.lang === "en" ? "on" : ""}">English</button><button data-lang="ru" class="${I18N.lang === "ru" ? "on" : ""}">Русский</button></div>
     <h4>Figma access</h4>
-    <p>${st.figma_token ? "<b>Connected.</b> The token is stored only on this computer, in a file readable by your account only." : "<b>Not connected.</b> coloro cannot load files without a token."}</p>
+    <p>${st.figma_token ? "<b>Connected.</b> The token is stored only on this computer, in a file readable by your account only." : "<b>Not connected.</b> Stealer cannot load files without a token."}</p>
     <p class="hint">${TOKEN_WHY}</p>
     <div class="row"><input class="in" type="password" id="tok" placeholder="${st.figma_token ? "Paste a new token to replace it" : "figd_…"}" autocomplete="off"><button class="b main" id="saveTok">Save</button></div>
     <h4>Token library for ${esc(p.name)}</h4>
     <p>${t.count ? `<b>${esc(t.file)}</b> · ${pl(t.count, "token")} · loaded ${esc(ago(t.loaded_at))}.` : "<b>Not loaded.</b>"}</p>
-    <p class="hint">The design system’s color tokens. coloro compares every color in the files with them to find near-token, off-system and unbound colors. Each project has its own library. W3C Design Tokens, Tokens Studio, a variables export or a CSV with name and value columns.</p>
+    <p class="hint">The design system’s color tokens. Stealer compares every color in the files with them to find near-token, off-system and unbound colors. Each project has its own library. W3C Design Tokens, Tokens Studio, a variables export or a CSV with name and value columns.</p>
     <div class="row"><input class="in" type="file" id="tfile" accept=".json,.csv,.txt,application/json,text/csv"><button class="b main" id="upTok">${t.count ? "Replace" : "Load"}</button></div>
     <h4>Updates</h4>
     <div class="row"><span class="grow label">Files downloaded at the same time</span><span style="width:80px">${select("workers", [1, 2, 3, 4, 5, 6, 7, 8].map((n) => [n, String(n)]), st.settings.workers)}</span></div>
-    <p class="hint" style="margin-top:6px">More is faster but closer to the Figma rate limit. 4 is a safe default.</p>
+    <p class="hint">More is faster but closer to the Figma rate limit. 4 is a safe default.</p>
     <div class="row"><button class="b" id="forceAll">Reload all files of ${esc(p.name)} from scratch</button></div>
-    <p class="hint" style="margin-top:6px">Normally an update downloads only files and pages that changed. Use this if the data looks wrong.</p>`);
+    <p class="hint">Normally an update downloads only files and pages that changed. Use this if the data looks wrong.</p>`);
+  $$("#langSeg [data-lang]").forEach((b) => (b.onclick = () => { if (b.dataset.lang !== I18N.lang) I18N.setLang(b.dataset.lang); }));
   $("#saveTok").onclick = async () => {
     const v = $("#tok").value.trim();
     if (!v) { toast("Paste the token first", "err"); return; }
@@ -2138,6 +2148,7 @@ const VIEWS = { comments: viewComments, colors: viewColors, tokens: viewTokensPa
 
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });
 (async function start() {
+  I18N.start();
   applyTheme(document.documentElement.classList.contains("pre-light"));
   if (LS.get("closed.l", false)) document.body.classList.add("l-closed");
   if (LS.get("closed.r", false)) document.body.classList.add("r-closed");

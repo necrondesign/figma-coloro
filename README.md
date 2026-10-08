@@ -128,7 +128,8 @@ Three floating blocks on each side. On the left: projects (each product has its 
 token library and history) and files (a checkbox includes a file, a click on its name shows only
 that file). On the right: content types, and the options and filters of the chosen type. Each
 side collapses into one floating button that keeps showing progress and errors; on a narrow
-screen the blocks open as dropdowns. Dark and light themes.
+screen the blocks open as dropdowns. Dark and light themes; English and Russian, switched in the
+settings (the gear).
 
 ![Light theme](docs/screenshots/light.png)
 
