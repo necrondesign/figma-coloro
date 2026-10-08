@@ -1,28 +1,11 @@
-# Собранные данные и временные файлы
-out/
-raw/
-log*.txt
-w*.txt
-
-# Токен Figma — никогда не коммитим
-token.txt
-
-# Личные настройки и список источников
-settings.json
-sources.json
-tokens.json
-
-# Готовый отчёт
-цвета-макетов.html
-colors-report.html
-
-__pycache__/
-.DS_Store
-
-# База coloro v2
+# Local database and its journal
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
 
-# Настройки среды разработки
+# Python and macOS
+__pycache__/
+.DS_Store
+
+# Editor and agent settings
 .claude/

@@ -72,6 +72,16 @@ def is_large(font: dict) -> bool:
     return size >= 24 or (size >= 18.66 and weight >= 700)
 
 
+_FG_WORDS = ("text", "fg", "foreground", "label", "content", "icon", "on ")
+_BG_WORDS = ("surface", "background", "bg", "fill", "container", "base", "layer")
+
+
+def _prefer(names: list[str], words) -> list[str]:
+    """У одного значения бывает несколько токенов (белый — и фон, и текст на акценте). Для текста
+    первыми — текстовые токены, для фона — токены поверхностей."""
+    return sorted(names, key=lambda n: (not any(w in n.lower() for w in words), n))
+
+
 def _name(s: dict, idx) -> str:
     if s["kind"] == "image":
         return "Image"
@@ -83,7 +93,7 @@ def _name(s: dict, idx) -> str:
         return "No background"
     if s["src"] and s["src"].startswith("s:"):
         return s["src"][2:]
-    toks = idx.exact(s["color"], s["alpha"]) if idx else []
+    toks = _prefer(idx.exact(s["color"], s["alpha"]), _BG_WORDS) if idx else []
     return toks[0] if toks else "#" + s["color"] + (f" {s['alpha']}%" if s["alpha"] < 100 else "")
 
 
@@ -118,7 +128,7 @@ def report(con, filt: Filter, idx) -> dict:
     for (bg, c, a, stroke, big, raw), x in pairs.items():
         s = parse(val(bg))
         item = {"bg": bg, "surface": _name(s, idx), "bg_kind": s["kind"], "bg_color": s["color"], "fg": raw,
-                "color": c, "alpha": a, "outline": stroke, "fg_tokens": idx.exact(c, a) if idx else [], "large": big, **x}
+                "color": c, "alpha": a, "outline": stroke, "fg_tokens": _prefer(idx.exact(c, a), _FG_WORDS) if idx else [], "large": big, **x}
         if s["kind"] != "solid" or s["alpha"] < 100:
             # Картинка, градиент или полупрозрачный фон, под которым ничего не нашлось.
             item.update(status="unknown", ratio=None, need=None)

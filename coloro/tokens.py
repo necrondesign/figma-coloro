@@ -66,6 +66,26 @@ def _row(name, kind, value, mode="", collection="", scope="", library="", key=""
             "key": str(key or "")}
 
 
+def _plain(kind: str, v):
+    """Значение формата DTCG 2025.10 → обычное: цвет-объект {colorSpace, components, alpha, hex}
+    → «#RRGGBB[AA]», размер {value, unit} → «16px». Остальное — как есть."""
+    if not isinstance(v, dict):
+        return v
+    if kind == "color" and ("colorSpace" in v or "hex" in v):
+        hexv = v.get("hex")
+        comps = v.get("components")
+        if not hexv and str(v.get("colorSpace", "srgb")).lower() == "srgb" and isinstance(comps, list) and len(comps) == 3 \
+                and all(isinstance(x, (int, float)) for x in comps):
+            hexv = "#" + "".join("%02X" % max(0, min(255, round(x * 255))) for x in comps)
+        if not hexv:
+            return v
+        a = v.get("alpha")
+        return hexv.upper() + ("%02X" % round(a * 255) if isinstance(a, (int, float)) and a < 1 else "")
+    if kind == "number" and "value" in v and set(v) <= {"value", "unit"}:
+        return f"{v['value']}{v.get('unit') or ''}"
+    return v
+
+
 def _from_tree(data) -> list[dict]:
     """W3C Design Tokens и Tokens Studio: обходит дерево, листья — словари с $value / value."""
     flat: dict[str, object] = {}
@@ -98,12 +118,12 @@ def _from_tree(data) -> list[dict]:
     for key, raw in flat.items():
         kind = _kind(types.get(key))
         name, coll = key.replace(".", "/"), key.split(".")[0] if "." in key else ""
-        val = resolve(raw)
+        val = _plain(kind, resolve(raw))
         # Значения по режимам — словарь «режим → значение» у цвета (у типографики и теней
         # словарь — это само значение).
         if isinstance(val, dict) and kind not in ("typography", "shadow"):
             for mode, mv in val.items():
-                out.append(_row(name, kind, resolve(mv), mode, coll))
+                out.append(_row(name, kind, _plain(kind, resolve(mv)), mode, coll))
             continue
         out.append(_row(name, kind, val, "", coll))
     return out

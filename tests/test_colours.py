@@ -1,5 +1,6 @@
 """Тесты второго этапа: цвет, справочник токенов, фильтры, левые цвета, общая картина."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,6 +40,17 @@ class HexWithPercent(unittest.TestCase):
 
 
 class Tokens(unittest.TestCase):
+    def test_dtcg_2025_color_objects(self):
+        # Так цвет и размер записывает стабильная версия формата DTCG (её выгружает Figma).
+        src = json.dumps({"brand": {"$type": "color",
+                                    "pink": {"$value": {"colorSpace": "srgb", "components": [1, 0, 0.435], "alpha": 1, "hex": "#ff006f"}},
+                                    "dim": {"$value": {"colorSpace": "srgb", "components": [0, 0, 0], "alpha": 0.4}}},
+                          "space": {"$type": "dimension", "m": {"$value": {"value": 16, "unit": "px"}}}})
+        rows = {r["name"]: r for r in tokens.parse_all(src)}
+        self.assertEqual((rows["brand/pink"]["color"], rows["brand/pink"]["alpha"], rows["brand/pink"]["mode"]), ("FF006F", 100, ""))
+        self.assertEqual((rows["brand/dim"]["color"], rows["brand/dim"]["alpha"]), ("000000", 40))
+        self.assertEqual(rows["space/m"]["value"], "16px")
+
     def test_same_value_two_names_not_merged(self):
         idx = tokens.Index(tokens.parse("name,value\nbg/white,#FFFFFF\ntext/inverse,#FFFFFF\n"))
         self.assertEqual(sorted(idx.exact("FFFFFF", 100)), ["bg/white", "text/inverse"])

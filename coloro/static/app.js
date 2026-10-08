@@ -25,7 +25,8 @@ function ago(iso) {
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return s < 86400 * 30 ? `${Math.round(s / 86400)} days ago` : day(iso);
+  if (s < 86400 * 30) { const d = Math.round(s / 86400); return d === 1 ? "yesterday" : `${d} days ago`; }
+  return day(iso);
 }
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const LS = {
@@ -590,7 +591,14 @@ function readHash() {
     S.type = "colors"; S.search = null; S.show.colors.view = "contrast";
   } else if (TYPES.some((t) => t.k === path)) {
     S.type = path; S.search = null;
+    // «#/colors?view=contrast&cat=fail» — ссылка сразу на нужный вид раздела.
+    const sh = S.show[path];
+    if (query && sh) for (const [k, v] of new URLSearchParams(query)) {
+      if (k in sh) sh[k] = typeof sh[k] === "boolean" ? v === "1" || v === "true" : typeof sh[k] === "number" ? +v : v;
+    }
   }
+  const theme = new URLSearchParams(query || "").get("theme");
+  if (theme === "light" || theme === "dark") applyTheme(theme === "light");
 }
 
 /* ───────────────────── center: routing ───────────────────── */
@@ -1496,7 +1504,7 @@ async function viewSurfaces(el, stale) {
     const items = d.surfaces.filter((s) => hit(s.color, s.name, ...(s.tokens || []), ...s.top_components.map((c) => c.name)));
     rowsWithPlaces(list, items, (s, n) => `<div class="crow" data-n="${n}"><span class="sample" style="background:${surfCss(s)};border:1px solid var(--line)"></span>
         <div class="name"><b>${esc(s.name)}</b><small>${s.kind === "solid" ? `<span class="mono">#${esc(s.color)}${s.alpha < 100 ? " " + s.alpha + "%" : ""}</span> · ${s.src ? (s.src === "v" ? "variable" : "style") : (s.tokens || []).length ? "token value set by hand" : "set by hand"} · ${esc(TONES[s.tone])}` : esc(TONES[s.tone])}</small></div>
-        <div class="num">${num(s.texts)} <span class="muted">texts</span></div><div class="num c-screens">${num(s.components)} <span class="muted">components</span></div>
+        <div class="num">${num(s.texts)} <span class="muted">texts</span></div><div class="num c-screens">${num(s.components)} <span class="muted">${s.components === 1 ? "component" : "components"}</span></div>
         <div class="num c-files">${s.fail ? `<span class="dn">${num(s.fail)} fail</span>` : ""}</div>
         <div class="what"><span class="onrow">${s.text_colors.slice(0, 6).map((c) => onSample(surfCss(s), c.color, c.alpha)).join("")}</span>${s.top_components.slice(0, 3).map((c) => esc(c.name)).join(", ")}</div></div>`,
     (s, box) => surfaceDetail(d, s, box));
@@ -2034,7 +2042,7 @@ const closeDialog = () => { $("#veil").hidden = true; };
 
 const TOKEN_WHY = `A link only says which file to read. Figma gives the file’s data through its API only with a personal access token,
   the same way it checks your access when you open the file. coloro reads files with your token; it never changes them.
-  Create one in Figma: Settings → Security → Personal access tokens, with read access to file content.`;
+  Create one in Figma: Settings → Security → Personal access tokens, with read access to file content and comments.`;
 
 function newProjectDialog() {
   const needToken = !S.st.figma_token;

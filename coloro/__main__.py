@@ -3,6 +3,7 @@
   load <ссылка> [--pages stage,...] [--db путь] [--force]   загрузить файл
   stats [--db путь] [--pages stage] [--with-hidden] [--with-archive]   сводка по цветам
   serve [--db путь] [--port 8800] [--no-browser]   открыть coloro в браузере
+  demo [--db путь] [--port 8800] [--no-browser]    собрать выдуманный проект и открыть его
 """
 
 from __future__ import annotations
@@ -119,6 +120,14 @@ def cmd_serve(a) -> None:
     server.serve(a.port, open_browser=not a.no_browser)
 
 
+def cmd_demo(a) -> None:
+    from . import demo
+    path = demo.build(Path(a.db))
+    print(f"Demo project is ready: {path}")
+    if not a.build_only:
+        cmd_serve(a)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="coloro")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -139,6 +148,12 @@ def main() -> None:
     v.add_argument("--port", type=int, default=8800)
     v.add_argument("--no-browser", action="store_true")
     v.set_defaults(fn=cmd_serve)
+    d = sub.add_parser("demo", help="build an invented project and open it, no Figma needed")
+    d.add_argument("--db", default=str(Path.home() / ".coloro" / "demo.sqlite"))
+    d.add_argument("--port", type=int, default=8800)
+    d.add_argument("--no-browser", action="store_true")
+    d.add_argument("--build-only", action="store_true")
+    d.set_defaults(fn=cmd_demo)
     a = ap.parse_args()
     a.fn(a)
 
