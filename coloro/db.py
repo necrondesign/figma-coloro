@@ -141,6 +141,23 @@ CREATE TABLE IF NOT EXISTS snapshots (
     taken_at TEXT, file_key TEXT, metrics TEXT,
     PRIMARY KEY (taken_at, file_key)
 ) WITHOUT ROWID;
+
+-- Комментарии и версии файла (см. activity.py). parent_id — у ответа в обсуждении;
+-- node_id — слой, к которому приколот комментарий; author — ник в Figma.
+CREATE TABLE IF NOT EXISTS comments (
+    file_key TEXT, id TEXT, parent_id TEXT, node_id TEXT, message TEXT, author TEXT,
+    created_at TEXT, resolved_at TEXT,
+    PRIMARY KEY (file_key, id)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS versions (
+    file_key TEXT, id TEXT, created_at TEXT, label TEXT, description TEXT, author TEXT,
+    PRIMARY KEY (file_key, id)
+) WITHOUT ROWID;
+-- Когда забирали и что ответила Figma: error — например, forbidden, если токену не хватает прав.
+CREATE TABLE IF NOT EXISTS activity (
+    file_key TEXT, kind TEXT, checked_at TEXT, error TEXT,
+    PRIMARY KEY (file_key, kind)
+) WITHOUT ROWID;
 """
 
 # Колонки, добавленные после первого формата: в старой базе их дописываем, а сами данные

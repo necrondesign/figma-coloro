@@ -75,6 +75,7 @@ const DEFAULT_SHOW = {
   spacing: { group: "spacing", cat: "near" },
   effects: { cat: "unbound" },
   surfaces: { view: "contrast", cat: "fail", ccat: "unusual", q: "" },
+  activity: { view: "comments", cat: "open", named: true, q: "" },
   images: { cat: "repeated" },
   components: { cat: "all", q: "", previews: true },
   text: { cat: "all", q: "", mode: "forms", sort: "uses", whole: false, typos: false, nolayout: false },
@@ -415,6 +416,7 @@ const TYPES = [
   { k: "surfaces", t: "Surfaces", icon: "M2.5 10.5 8 13.5l5.5-3M2.5 7.5 8 10.5l5.5-3L8 4.5z" },
   { k: "effects", t: "Effects", icon: "M4 4h7v7H4zM6 13h7V6" },
   { k: "images", t: "Images", icon: "M2.5 3.5h11v9h-11zM2.5 10l3-3 3 3 2-2 3 3" },
+  { k: "activity", t: "Versions & comments", short: "Activity", icon: "M8 4.5V8l2.5 1.5M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.6h2.6" },
   { k: "components", t: "Components", icon: "M8 2 11 5 8 8 5 5zM8 8l3 3-3 3-3-3z" },
 ];
 
@@ -1507,6 +1509,89 @@ async function viewSurfaces(el, stale) {
   }
 }
 
+/* ───────────────────── versions and comments ───────────────────── */
+
+const ACATS = [["open", "Open"], ["stale", "Open over 30 days"], ["resolved", "Resolved"], ["all", "All"]];
+const inACat = (t, k) => (k === "open" ? t.open : k === "stale" ? t.stale : k === "resolved" ? !t.open : true);
+const initial = (s) => esc(((s || "?").trim()[0] || "?").toUpperCase());
+const fmtDate = (iso) => (iso ? `${day(iso)}, ${new Date(iso).getFullYear()}` : "");
+
+async function viewActivity(el, stale) {
+  const sh = S.show.activity;
+  const [d, h] = await Promise.all([api("/api/activity" + fq()), api("/api/history" + fq()).catch(() => null)]);
+  if (stale()) return;
+  const T = d.totals;
+  if (!d.checked) {
+    $("#tname").innerHTML = "Versions & comments";
+    el.innerHTML = `<div class="empty"><b>Versions and comments are not loaded yet</b>Stealer takes them from Figma on every update. One update is enough.<br><button class="b main" id="acUpd">Update</button></div>`;
+    $("#acUpd").onclick = () => startUpdate({ project: S.project });
+    return;
+  }
+  const q = (sh.q || "").toLowerCase();
+  const hit = (...xs) => !q || xs.some((x) => String(x || "").toLowerCase().includes(q));
+  $("#tname").innerHTML = `Versions & comments<span>${pl(T.open, "open thread")}</span>`;
+  drawShow(`${seg([["comments", "Comments"], ["versions", "Versions"]], sh.view, "aview")}
+    ${sh.view === "comments" ? `<div class="sec">Show</div>${chips(ACATS.map(([k, t]) => [k, t, d.comments.filter((x) => inACat(x, k)).length]), sh.cat)}`
+      : `<div class="tg" data-named><span>Named versions only</span><span class="sw ${sh.named ? "on" : ""}" role="switch" aria-checked="${sh.named}"></span></div>
+         <p class="label" style="padding:0 6px;margin:0">Measurements of the project are shown between the versions: they tell after which version things got better or worse.</p>`}
+    <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Text, author, screen"></div>`,
+  (root) => {
+    bindShow(root, "activity", () => route());
+    root.querySelectorAll("[data-aview]").forEach((b) => (b.onclick = () => { sh.view = b.dataset.aview; save(); route(); }));
+    const nm = root.querySelector("[data-named]");
+    if (nm) nm.onclick = () => { sh.named = !sh.named; save(); route(); };
+  });
+  const lost = Object.entries(d.access || {});
+  const notice = lost.length ? `<div class="notice">The Figma token cannot read ${lost.map(([k]) => k).join(" and ")} of ${esc(lost[0][1].slice(0, 3).join(", "))}${lost[0][1].length > 3 ? "…" : ""}. Create a token with read access to comments and versions. <a id="acTok">Open settings</a></div>` : "";
+  const goC = (cat) => () => { sh.view = "comments"; sh.cat = cat; sh.q = ""; save(); route(); };
+  if (sh.view === "comments") {
+    const items = d.comments.filter((t) => inACat(t, sh.cat) && hit(t.message, t.author, t.screen, t.page, t.file, ...t.replies.map((r) => r.message)));
+    el.innerHTML = `<div class="head"><div class="grow"><h1>Comments · ${esc(ACATS.find(([k]) => k === sh.cat)[1])}</h1><p class="sub">Discussions in the files, with the screen each one is pinned to. Open a thread to read the replies.</p></div></div>${notice}<div class="list" id="list"></div>`;
+    rowsWithPlaces($("#list"), items, (t, n) => `<div class="crow" data-n="${n}"><span class="sample avatar">${initial(t.author)}</span>
+        <div class="name"><span class="msg">${esc(t.message)}</span><small>${esc(t.author)} · ${esc(ago(t.created_at))}${t.screen ? ` · ${esc(t.page || "")} › ${esc(t.screen)}` : ""}${t.replies.length ? ` · ${pl(t.replies.length, "reply", "replies")}` : ""}</small></div>
+        <div class="num">${t.age != null ? `${num(t.age)} <span class="muted">${t.age === 1 ? "day" : "days"}</span>` : ""}</div>
+        <div class="num c-files"><span class="muted">${esc(t.file)}</span></div>
+        <div class="what">${t.open ? (t.stale ? '<span class="tag off">Open, old</span>' : '<span class="tag near">Open</span>') : '<span class="tag ok">Resolved</span>'}<a href="${esc(t.link)}" target="_blank" rel="noopener">Figma ↗</a></div></div>`,
+    (t, box) => {
+      box.innerHTML = `<div class="thread">${[{ author: t.author, message: t.message, created_at: t.created_at }, ...t.replies].map((r) =>
+        `<div class="tmsg"><span class="sample avatar">${initial(r.author)}</span><div><b>${esc(r.author)}</b> <span class="muted">${esc(ago(r.created_at))}</span><p>${esc(r.message)}</p></div></div>`).join("")}
+        <a class="b sm" href="${esc(t.link)}" target="_blank" rel="noopener">Open in Figma ↗</a></div>`;
+    });
+  } else {
+    // Версии и замеры проекта на одной ленте: между ними видно, что изменилось.
+    const vs = d.versions.filter((v) => (!sh.named || v.label) && hit(v.label, v.description, v.author, v.file));
+    const pts = (h && h.points) || [];
+    const marks = pts.map((p, i) => ({ snap: true, created_at: p.taken_at, metrics: p.metrics, prev: i ? pts[i - 1].metrics : null }));
+    const feed = [...vs, ...(q ? [] : marks)].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    el.innerHTML = `<div class="head"><div class="grow"><h1>Versions${sh.named ? " · named" : ""}</h1><p class="sub">${pl(T.versions, "version")} loaded, ${num(T.named)} named. ${pts.length ? `${pl(pts.length, "measurement")} of the project between them.` : "Measurements appear after updates."}</p></div></div>${notice}<div class="list" id="list"></div>`;
+    const metricLine = (m, prev) => HISTORY.filter((x) => m[x.key] != null).map((x) =>
+      `${esc(x.title)} <b>${x.pct ? pct(m[x.key]) : num(m[x.key])}</b>${prev && prev[x.key] != null ? " " + trendText(x.key, m[x.key] - prev[x.key], x.pct) : ""}`).join(" · ");
+    rowsWithPlaces($("#list"), feed, (v, n) => v.snap
+      ? `<div class="crow snap" data-n="${n}"><span class="sample"><svg class="i" viewBox="0 0 16 16"><path d="M2.5 12.5h11M4 10l3-3 2 2 3-4"/></svg></span>
+          <div class="name"><b>Measured</b> <span class="muted">${esc(fmtDate(v.created_at))}</span><small>${metricLine(v.metrics, v.prev)}</small></div><div></div><div></div><div></div></div>`
+      : `<div class="crow" data-n="${n}"><span class="sample avatar">${initial(v.author)}</span>
+          <div class="name"><b>${esc(v.label || "Autosave")}</b><small>${v.description ? esc(v.description.slice(0, 160)) + " · " : ""}${esc(v.author)} · ${esc(fmtDate(v.created_at))}</small></div>
+          <div class="num"><span class="muted">${esc(ago(v.created_at))}</span></div><div class="num c-files"><span class="muted">${esc(v.file)}</span></div>
+          <div class="what"><a href="${esc(v.link)}" target="_blank" rel="noopener">Figma ↗</a></div></div>`,
+    (v, box) => { box.innerHTML = v.snap ? `<p class="sub" style="padding:6px">${metricLine(v.metrics, v.prev)}</p>` : `<p class="sub" style="padding:6px;white-space:pre-wrap">${esc(v.description || "No description.")}</p>`; });
+  }
+  summary(el, {
+    tiles: [{ t: "Open threads", v: num(T.open), sub: `${num(T.resolved)} resolved` },
+      { t: "Open over 30 days", v: num(T.stale), sub: "waiting for an answer" },
+      { t: "Versions this week", v: num(T.week), sub: T.week ? `by ${pl(T.authors, "person", "people")}` : "" },
+      { t: "Named versions", v: num(T.named), sub: `of ${num(T.versions)}` }],
+    recs: [
+      { n: T.stale, title: `Answer or resolve ${pl(T.stale, "old thread")}`, text: "Open for more than 30 days. An old open question is either done and forgotten or blocked.", go: goC("stale") },
+      { n: d.busy_screens.length ? d.busy_screens[0].open : 0, title: d.busy_screens.length ? `Most discussed: ${d.busy_screens.slice(0, 3).map((b) => `${b.screen} (${b.open})`).join(", ")}` : "",
+        text: "Screens with the most open threads. Often the places where the design is still unsettled.", go: goC("open") },
+      ...(T.versions && T.named / T.versions < 0.2 ? [{ n: T.versions - T.named, title: "Name the versions you hand off", text: "Most versions are autosaves. A named version with a description tells developers what changed and when.", go: () => { sh.view = "versions"; sh.named = false; save(); route(); } }] : []),
+      ...(lost.length ? [{ always: true, title: "Give the token access to comments and versions", text: "Without it this section stays empty for some files.", go: openSettings, label: "Open settings" }] : []),
+    ],
+  });
+  const at = $("#acTok");
+  if (at) at.onclick = openSettings;
+}
+
 /* ───────────────────── images ───────────────────── */
 
 const MODES = { FILL: "fill", FIT: "fit", CROP: "crop", TILE: "tile", STRETCH: "stretch" };
@@ -2031,7 +2116,7 @@ $("#veil").onclick = (e) => { if (e.target.id === "veil") closeDialog(); };
 
 /* ───────────────────── start ───────────────────── */
 
-const VIEWS = { surfaces: viewSurfaces, colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
+const VIEWS = { activity: viewActivity, surfaces: viewSurfaces, colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
   images: viewImages, components: viewComponents, search: viewSearch };
 
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });
