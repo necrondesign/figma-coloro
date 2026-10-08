@@ -1,4 +1,4 @@
-# Stealer
+# Figma Stealer
 
 Shows what in your Figma files follows the design system and what does not, and takes you
 straight to the layer that needs fixing. Colors, tokens, typography, text, spacing, effects,
