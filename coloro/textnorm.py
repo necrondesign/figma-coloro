@@ -188,10 +188,9 @@ def whole_words(text: str | None, spec: str | None) -> int:
     if kind == "x":
         return 1 if _phrase_re(value).search(text) else 0
     words = {_stem_cached(m.group(0)) for m in _WORD.finditer(text)}
-    for s in value.split(","):
-        if s in words:
-            continue
-        if any(len(w) == len(s) + 1 and w[:-2] + w[-1] == s for w in words):
-            continue
-        return 0
+    # Через «,» — слова запроса, все обязательны; через «|» — запасные варианты одного слова.
+    for group in value.split(","):
+        if not any(s in words or any(len(w) == len(s) + 1 and w[:-2] + w[-1] == s for w in words)
+                   for s in group.split("|")):
+            return 0
     return 1

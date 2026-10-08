@@ -108,6 +108,27 @@ class Find(unittest.TestCase):
         self.assertEqual(ids, ["t1"])
         self.assertEqual(search.texts(self.con, Filter(), "монет", mode="exact", whole=True)["matched"], 1)
 
+    def test_forgiving_search(self):
+        # Опечатка — только по флажку; другая раскладка и транслит — по умолчанию.
+        _, ids = self.found(q="мгазин", where="name")
+        self.assertEqual(ids, [])
+        res, ids = self.found(q="мгазин", where="name", typos="1")
+        self.assertEqual(ids, ["s1"])
+        self.assertIn("магазин", res["info"]["also"])
+        _, ids = self.found(q="vfufpby", where="name")          # «магазин» в английской раскладке
+        self.assertEqual(ids, ["s1"])
+        _, ids = self.found(q="profil", where="name")           # транслит
+        self.assertEqual(ids, ["s2"])
+        _, ids = self.found(q="profil", where="name", layout="0")
+        self.assertEqual(ids, [])
+        self.assertEqual(search.texts(self.con, Filter(), "купитъ подпеску", typos=True)["matched"], 1)
+
+    def test_page_and_file_names(self):
+        res, ids = self.found(q="stage 2", where="page")
+        self.assertEqual(ids, ["s2"])                           # экраны этой страницы
+        _, ids = self.found(q="stage 2", where="text")
+        self.assertEqual(ids, [])
+
     def test_several_places_at_once(self):
         _, ids = self.found(q="кнопка", where=["name"])
         self.assertEqual(ids, ["b1", "b2"])       # слои с этим названием

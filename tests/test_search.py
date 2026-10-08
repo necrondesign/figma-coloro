@@ -31,6 +31,20 @@ class Stems(unittest.TestCase):
         self.assertTrue(whole_words("купить 100 монет!", "x:100 монет"))
         self.assertFalse(whole_words("купить 1100 монеток", "x:100 монет"))
 
+    def test_fuzzy_helpers(self):
+        from coloro import fuzzy
+        self.assertEqual(fuzzy.distance("onbaording", "onboarding", 2), 1)   # перестановка — одна правка
+        self.assertEqual(fuzzy.distance("кнопка", "кошка", 1), 2)
+        self.assertEqual(fuzzy.other_layout("ghbdtn"), "привет")
+        self.assertEqual(fuzzy.other_layout("руддщ"), "hello")
+        self.assertEqual(fuzzy.translit("кнопка"), "knopka")
+        self.assertEqual(fuzzy.translit("knopka"), "кнопка")
+        from collections import Counter
+        groups, also = fuzzy.expand("Onbaording", Counter({"onboarding": 5, "other": 1}), typos=True, layout=False)
+        self.assertEqual(also, ["onboarding"])
+        groups, also = fuzzy.expand("кот", Counter({"кит": 5}), typos=True, layout=False)
+        self.assertEqual(also, [])                                       # в коротком слове опечаток не прощаем
+
     def test_short_words_kept_whole(self):
         self.assertEqual(query_stems("VIP 100 к"), ["vip", "100", "к"])
 

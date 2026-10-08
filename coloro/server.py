@@ -450,7 +450,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/find":
             return self._json(search.find(con, filt, q, limit=limit, offset=int(flat.get("offset") or 0)))
         if path == "/api/find/layers":
-            cond, args, _ = search.build(con, q)
+            cond, args, _ = search.build(con, q, filt.project)
             return self._json(search.layers(con, filt, cond, args, flat.get("file_key", ""), flat.get("screen") or None))
         if path == "/api/search":
             kind = flat.get("kind", "text")
@@ -469,7 +469,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(search.texts(con, filt, flat.get("q", ""), flat.get("mode", "forms"),
                                            limit=max(1, min(5000, int(flat.get("limit") or 500))),
                                            cat=flat.get("cat", "all"), sort=flat.get("sort", "uses"),
-                                           whole=flat.get("whole") == "1"))
+                                           whole=flat.get("whole") == "1", typos=flat.get("typos") == "1",
+                                           layout=flat.get("layout", "1") == "1"))
         if path == "/api/typography":
             return self._json(remember("typography", lambda: typography.fonts(con, filt)))
         if path == "/api/components":

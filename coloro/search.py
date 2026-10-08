@@ -14,6 +14,7 @@ import re
 from . import color as colorm
 from .filters import NODE_JOIN, NODE_SCAN, Filter
 from .inventory import figma_link
+from . import fuzzy, memo
 from .textnorm import norm, query_stems
 
 _CONS = set("бвгджзйклмнпрстфхцчшщ")
@@ -28,10 +29,11 @@ def _patterns(stem: str) -> list[str]:
     return pats
 
 
-def _all_words(column: str, stems: list[str]) -> tuple[str, list]:
+def _all_words(column: str, stems: list) -> tuple[str, list]:
+    """Все слова запроса в столбце. Слово — основа или список: своя основа и запасные варианты."""
     parts, args = [], []
     for s in stems:
-        pats = _patterns(s)
+        pats = [p for x in ([s] if isinstance(s, str) else s) for p in _patterns(x)]
         parts.append("(" + " OR ".join(f"{column} LIKE ?" for _ in pats) + ")")
         args += pats
     return " AND ".join(parts), args
@@ -392,26 +394,42 @@ def _instances_of(by_file: dict[str, list[str]]) -> tuple[str, list]:
             [x for p in pairs for x in p])
 
 
-def build(con, q: dict) -> tuple[str, list, dict]:
+def _fuzzy(con, project, text: str, typos: bool, layout: bool) -> tuple[list, list[str]]:
+    """Слова запроса с запасными вариантами из словаря проекта (см. fuzzy)."""
+    if not (typos or layout):
+        return query_stems(text), []
+    vocab = memo.cached(con, "vocabulary", [project], lambda: fuzzy.vocabulary(con, project))
+    return memo.cached(con, "expand", [project, norm(text), typos, layout],
+                       lambda: fuzzy.expand(text, vocab, typos, layout))
+
+
+def _flag(q: dict, name: str, default: bool) -> bool:
+    v = _one(q, name)
+    return default if v in (None, "") else v in ("1", "true", "on")
+
+
+def build(con, q: dict, project: int | None = None) -> tuple[str, list, dict]:
     """Запрос из нескольких частей → одно условие на слои. Части складываются через «и»:
     текст «Купить» + размер 56×56 + цвет #FF006F — кнопки с этим текстом, размером и цветом."""
     parts, args, info = [], [], {}
 
     text = _one(q, "q")
     if text:
-        stems = query_stems(text)
-        if not stems:
-            raise SearchError("Enter a word or phrase")
-        # Где искать — несколько мест сразу: надписи, названия слоёв, названия компонентов.
-        where = {w for w in _many(q, "where") if w in ("text", "name", "component")}
+        # Где искать — несколько мест сразу: надписи, названия слоёв, компонентов, страниц и файлов.
+        where = {w for w in _many(q, "where") if w in ("text", "name", "component", "page")}
         if not where or "all" in _many(q, "where"):
             where = {"text", "name", "component"}
         # Как совпадать: «forms» — слова в любой форме и в любом порядке; «exact» — фраза целиком,
         # как написана (без учёта регистра и «ё»).
         exact = _one(q, "mode") == "exact"
         whole = _one(q, "whole") in ("1", "true", "on")
+        # Запасные слова: опечатки (по желанию) и другая раскладка с транслитом (по умолчанию).
+        stems, also = _fuzzy(con, project, text, not exact and _flag(q, "typos", False),
+                             not exact and _flag(q, "layout", True))
+        if not stems:
+            raise SearchError("Enter a word or phrase")
         phrase = norm(text)
-        spec = ("x:" + phrase) if exact else ("f:" + ",".join(stems))
+        spec = ("x:" + phrase) if exact else ("f:" + ",".join("|".join([s] if isinstance(s, str) else s) for s in stems))
 
         def match(column):
             if exact:
@@ -438,11 +456,19 @@ def build(con, q: dict) -> tuple[str, list, dict]:
             if ic != "0":
                 ors.append(f"({ic})")
                 oargs += ia
+        if "page" in where:
+            # Название страницы или файла: находятся экраны на этой странице или в этом файле.
+            cp, ap = match("norm(pg.name)")
+            cf, af = match("norm(f.name)")
+            ors.append(f"(n.id = n.screen AND ({cp} OR {cf}))")
+            oargs += ap + af
         if not ors:
             ors.append("0")
         parts.append("(" + " OR ".join(ors) + ")")
         args += oargs
-        info["stems"] = stems
+        info["stems"] = [s if isinstance(s, str) else s[0] for s in stems]
+        if also:
+            info["also"] = also
         info["phrase"] = norm(text)
 
     w, h = _one(q, "w"), _one(q, "h")
@@ -513,7 +539,7 @@ def build(con, q: dict) -> tuple[str, list, dict]:
 def find(con, filt: Filter, q: dict, limit: int = 60, offset: int = 0) -> dict:
     """Поиск всем сразу: экраны с совпадениями и фильтры по найденному — тип, страница, файл,
     компонент, свойства вариантов — со счётом. Один проход по слоям."""
-    cond, args, info = build(con, q)
+    cond, args, info = build(con, q, filt.project)
     where, fargs = filt.where()
     phrase = info.get("phrase")
     rank = "SUM(instr(IFNULL(n.tnorm, '') || ' ' || IFNULL(n.nnorm, ''), ?) > 0)" if phrase else "0"
@@ -594,15 +620,16 @@ TEXT_SORTS = {
 
 
 def texts(con, filt: Filter, q: str = "", mode: str = "forms", limit: int = 500,
-          cat: str = "all", sort: str = "uses", whole: bool = False) -> dict:
+          cat: str = "all", sort: str = "uses", whole: bool = False,
+          typos: bool = False, layout: bool = True) -> dict:
     """Все тексты макетов: одинаковый текст в разных местах — одна строка со счётом.
 
     Видно, какие формулировки повторяются, где одно и то же написано по-разному и какие тексты
     стоят без стиля. Одинаковыми считаются тексты, совпадающие без учёта регистра, «ё» и пробелов."""
     where, args = filt.where()
-    cond = ""
+    cond, also = "", []
     if q:
-        stems = query_stems(q)
+        stems, also = _fuzzy(con, filt.project, q, typos and mode != "exact", layout and mode != "exact")
         if mode == "exact":
             cond, cargs = " AND n.tnorm LIKE ?", [f"%{norm(q)}%"]
             if whole:
@@ -613,7 +640,7 @@ def texts(con, filt: Filter, q: str = "", mode: str = "forms", limit: int = 500,
             cond = " AND " + c
             if whole:
                 cond += " AND whole_words(n.tnorm, ?)"
-                cargs.append("f:" + ",".join(stems))
+                cargs.append("f:" + ",".join("|".join([s] if isinstance(s, str) else s) for s in stems))
         else:
             cargs = []
         args = args + cargs
@@ -633,4 +660,4 @@ def texts(con, filt: Filter, q: str = "", mode: str = "forms", limit: int = 500,
     chosen = [i for i in items if TEXT_CATS.get(cat, TEXT_CATS["all"])(i)]
     chosen.sort(key=TEXT_SORTS.get(sort, TEXT_SORTS["uses"]))
     return {"total": len(items), "total_uses": sum(i["uses"] for i in items), "counts": counts,
-            "matched": len(chosen), "items": chosen[:limit]}
+            "matched": len(chosen), "items": chosen[:limit], "also": also}

@@ -38,8 +38,10 @@ Colour difference is CIEDE2000, the way the eye sees it. Next to it: **gradients
 files and which are never used. Variables with themes (light, dark) show as one row with their
 value in every theme, and the files can be compared with one theme at a time.
 
-**Search.** One bar at the top: text in any word form and order, in text layers, layer names and
-component names (then every instance is found); width and height with a tolerance; a colour with a
+**Search.** One bar at the top: text in any word form and order, in text layers, layer and frame
+names, component names (then every instance is found) and page or file names (then their screens);
+it forgives typos if asked, and a word typed in the other keyboard layout or transliterated
+("knopka" for "кнопка"), always checking against words that really are in the files; width and height with a tolerance; a colour with a
 picker, eyedropper, opacity and tolerance. The parts combine: "Buy" + 56 × 56 + pink finds exactly
 those buttons. Results are screens with a count; a screen opens its layers with links and details
 on hover (size, font, colours and where each colour comes from). On the right, filters over the

@@ -76,7 +76,7 @@ const DEFAULT_SHOW = {
   effects: { cat: "unbound" },
   images: { cat: "repeated" },
   components: { cat: "all", q: "", previews: true },
-  text: { cat: "all", q: "", mode: "forms", sort: "uses", whole: false },
+  text: { cat: "all", q: "", mode: "forms", sort: "uses", whole: false, typos: false, nolayout: false },
 };
 const S = {
   st: null,
@@ -124,11 +124,13 @@ function fq(extra = {}) {
   return s ? "?" + s : "";
 }
 
+const WHERE_DEFAULT = ["text", "name", "component"];
+const customWhere = (w) => !!(w && w.length && (w.length !== WHERE_DEFAULT.length || w.some((x) => !WHERE_DEFAULT.includes(x))));
 /** Search query as request parameters. */
 function sq(extra = {}) {
   const s = S.search || {};
-  const where = s.where && s.where.length && s.where.length < 3 ? s.where : [];
-  const o = { q: s.q, where, mode: s.mode === "exact" ? "exact" : "", whole: s.whole ? "1" : "", w: s.w, h: s.h, tol: s.tol, color: s.color, ctol: s.color ? s.ctol : "",
+  const where = customWhere(s.where) ? s.where : [];
+  const o = { q: s.q, where, mode: s.mode === "exact" ? "exact" : "", whole: s.whole ? "1" : "", typos: s.typos ? "1" : "", layout: s.nolayout ? "0" : "", w: s.w, h: s.h, tol: s.tol, color: s.color, ctol: s.color ? s.ctol : "",
     type: s.type || [], page: s.page || [], comp: s.comp || [], ...extra };
   for (const [k, v] of Object.entries(s.props || {})) o["prop_" + k] = v;
   return fq(o);
@@ -560,7 +562,9 @@ function writeHash() {
     for (const k of ["q", "w", "h", "tol", "color", "ctol"]) if (s[k] && !(k === "ctol" && !s.color)) q.set(k, s[k]);
     if (s.mode === "exact") q.set("mode", "exact");
     if (s.whole) q.set("whole", "1");
-    if (s.where && s.where.length && s.where.length < 3) s.where.forEach((v) => q.append("where", v));
+    if (s.typos) q.set("typos", "1");
+    if (s.nolayout) q.set("layout", "0");
+    if (customWhere(s.where)) s.where.forEach((v) => q.append("where", v));
     for (const k of ["type", "page", "comp"]) (s[k] || []).forEach((v) => q.append(k, v));
     for (const [k, vs] of Object.entries(s.props || {})) vs.forEach((v) => q.append("prop_" + k, v));
     h += "?" + q.toString();
@@ -573,7 +577,7 @@ function readHash() {
     const q = new URLSearchParams(query);
     const props = {};
     for (const [k, v] of q) if (k.startsWith("prop_")) (props[k.slice(5)] = props[k.slice(5)] || []).push(v);
-    S.search = { q: q.get("q") || "", where: q.getAll("where"), mode: q.get("mode") || "forms", whole: q.get("whole") === "1", w: q.get("w") || "", h: q.get("h") || "", tol: q.get("tol") || "",
+    S.search = { q: q.get("q") || "", where: q.getAll("where"), mode: q.get("mode") || "forms", whole: q.get("whole") === "1", typos: q.get("typos") === "1", nolayout: q.get("layout") === "0", w: q.get("w") || "", h: q.get("h") || "", tol: q.get("tol") || "",
       color: q.get("color") || "", ctol: q.get("ctol") || 3, type: q.getAll("type"), page: q.getAll("page"), comp: q.getAll("comp"), props };
   } else if (TYPES.some((t) => t.k === path)) {
     S.type = path; S.search = null;
@@ -1224,24 +1228,36 @@ const XHINT = {
   unstyled: "Texts placed by hand without a text style in at least one place.",
 };
 
+/* Forgiving search: typos, the other keyboard layout and transliteration. Extra words always come
+   from the project's own files, and the result says which ones were added. */
+const fuzzyChecks = (typos, layout) => `
+  <label title="“Onbaording” finds “Onboarding”; misspelled names in the files are found too"><input type="checkbox" data-fz="typos" ${typos ? "checked" : ""}>Forgive typos</label>
+  <label title="“ghbdtn” finds “привет”, “knopka” finds “кнопка”, “онбординг” finds “onboarding”"><input type="checkbox" data-fz="layout" ${layout ? "checked" : ""}>Other keyboard layout and transliteration</label>`;
+function bindFuzzy(root, set) {
+  root.querySelectorAll("[data-fz]").forEach((i) => (i.onchange = () => set(i.dataset.fz, i.checked)));
+}
+const alsoLine = (also) => (also && also.length ? ` · also searched: ${esc(also.slice(0, 8).join(", "))}${also.length > 8 ? "…" : ""}` : "");
+
 async function viewText(el, stale) {
   const sh = S.show.text;
-  const d = await api("/api/texts" + fq({ q: sh.q, mode: sh.mode === "exact" ? "exact" : "", whole: sh.whole && sh.q ? "1" : "", cat: sh.cat, sort: sh.sort, limit: 3000 }));
+  const d = await api("/api/texts" + fq({ q: sh.q, mode: sh.mode === "exact" ? "exact" : "", whole: sh.whole && sh.q ? "1" : "", typos: sh.typos && sh.q ? "1" : "", layout: sh.nolayout ? "0" : "", cat: sh.cat, sort: sh.sort, limit: 3000 }));
   if (stale()) return;
   const items = d.items;
   $("#tname").innerHTML = `Text<span>${pl(d.total, "text")}</span>`;
   drawShow(`<div class="field"><span class="label">Find text</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Word or phrase"></div>
     ${seg([["forms", "Any word form"], ["exact", "Exact phrase"]], sh.mode === "exact" ? "exact" : "forms", "tmode")}
-    <div class="checks" style="margin-top:6px"><label><input type="checkbox" data-twhole ${sh.whole ? "checked" : ""}>Whole words only</label></div>
+    <div class="checks" style="margin-top:6px"><label><input type="checkbox" data-twhole ${sh.whole ? "checked" : ""}>Whole words only</label>
+      ${sh.mode === "exact" ? "" : fuzzyChecks(sh.typos, !sh.nolayout)}</div>
     <div class="sec">Show</div>${chips(XCATS.map(([k, t]) => [k, t, d.counts[k]]), sh.cat)}
     <div class="field" style="margin-top:6px"><span class="label">Sort by</span>${select("sort", [["uses", "Most used"], ["screens", "Number of screens"], ["long", "Longest first"], ["az", "A to Z"]], sh.sort)}</div>`,
   (root) => {
     bindShow(root, "text", () => route());
     root.querySelectorAll("[data-tmode]").forEach((b) => (b.onclick = () => { sh.mode = b.dataset.tmode; save(); route(); }));
     root.querySelector("[data-twhole]").onchange = (e) => { sh.whole = e.target.checked; save(); route(); };
+    bindFuzzy(root, (k, v) => { if (k === "typos") sh.typos = v; else sh.nolayout = !v; save(); route(); });
   });
   el.innerHTML = `<div class="head"><div class="grow"><h1>Text · ${esc(XCATS.find(([k]) => k === sh.cat)[1])}</h1>
-    <p class="sub">${esc(XHINT[sh.cat])} ${pl(d.matched, "text")}${d.matched > items.length ? `, the first ${num(items.length)} shown` : ""}. Texts are equal when they match ignoring case, ё and spaces.</p></div></div>
+    <p class="sub">${esc(XHINT[sh.cat])} ${pl(d.matched, "text")}${d.matched > items.length ? `, the first ${num(items.length)} shown` : ""}${alsoLine(d.also)}. Texts are equal when they match ignoring case, ё and spaces.</p></div></div>
     <div class="list" id="list"></div>`;
   {
     const c = d.counts, goCat = (cat) => () => { sh.cat = cat; save(); route(); };
@@ -1705,7 +1721,7 @@ async function viewSearch(el, stale) {
   const d = await screensBlock(box, (offset, limit) => "/api/find" + sq({ offset, limit }), (g) => "/api/find/layers" + sq({ file_key: g.file_key, screen: g.screen_id || "" }),
     "Try other words, a larger tolerance, or include hidden layers and archived pages.");
   if (stale() || !d) return;
-  box.insertAdjacentHTML("afterbegin", `<div class="head"><div class="grow"><h1>Search</h1><p class="sub">${esc(parts.join(" · "))}${d.info && d.info.colours != null ? ` · ${pl(d.info.colours, "matching color value")}` : ""}</p></div></div>`);
+  box.insertAdjacentHTML("afterbegin", `<div class="head"><div class="grow"><h1>Search</h1><p class="sub">${esc(parts.join(" · "))}${d.info && d.info.colours != null ? ` · ${pl(d.info.colours, "matching color value")}` : ""}${alsoLine(d.info && d.info.also)}</p></div></div>`);
   S.facets = d.facets;
   drawFiles();
   $("#tname").innerHTML = `Search<span>${pl(d.total_places, "match", "matches")}</span>`;
@@ -1713,11 +1729,12 @@ async function viewSearch(el, stale) {
     `<label><input type="checkbox" value="${esc(f.value)}" ${(s[key] || []).includes(String(f.value)) ? "checked" : ""}><span>${esc(label(f.value))}</span><em>${num(f.count)}</em></label>`).join("")}</div>` : "");
   const props = Object.entries(d.facets.props).map(([k, list]) => `<div class="sec">${esc(k)}</div><div class="facet" data-prop="${esc(k)}">${list.map((f) =>
     `<label><input type="checkbox" value="${esc(f.value)}" ${((s.props || {})[k] || []).includes(f.value) ? "checked" : ""}><span>${esc(f.value)}</span><em>${num(f.count)}</em></label>`).join("")}</div>`).join("");
-  const where = s.where && s.where.length ? s.where : ["text", "name", "component"];
+  const where = s.where && s.where.length ? s.where : WHERE_DEFAULT;
   drawShow(`${s.q ? `<div class="sec">Search text in</div><div class="checks" data-where>
-      ${[["text", "Text layers"], ["name", "Layer names"], ["component", "Component names"]].map(([k, t]) => `<label><input type="checkbox" value="${k}" ${where.includes(k) ? "checked" : ""}>${t}</label>`).join("")}</div>
+      ${[["text", "Text layers"], ["name", "Layer and frame names"], ["component", "Component names"], ["page", "Page and file names"]].map(([k, t]) => `<label><input type="checkbox" value="${k}" ${where.includes(k) ? "checked" : ""}>${t}</label>`).join("")}</div>
     <div class="sec">Match</div>${seg([["forms", "Any word form"], ["exact", "Exact phrase"]], s.mode === "exact" ? "exact" : "forms", "mode")}
-    <div class="checks" style="margin-top:6px"><label><input type="checkbox" data-whole ${s.whole ? "checked" : ""}>Whole words only</label></div>
+    <div class="checks" style="margin-top:6px"><label><input type="checkbox" data-whole ${s.whole ? "checked" : ""}>Whole words only</label>
+      ${s.mode === "exact" ? "" : fuzzyChecks(s.typos, !s.nolayout)}</div>
     <p class="label" style="padding:6px;margin:0">${s.mode === "exact" ? "The words in this order, as written. Case and ё are ignored." : "All words in any form and any order: “buy coins” finds “Buy 100 coins”."}
       ${s.whole ? (s.mode === "exact" ? " Not as part of a longer word." : " A word must be a form of the query word: “cat” finds “cats”, not “catalog”.") : " Also finds the query inside longer words."}</p>` : ""}
     <div class="field"><span class="label">Size tolerance, px</span><input class="in" data-o="tol" value="${esc(s.tol || "")}" placeholder="0.5" inputmode="decimal"></div>
@@ -1733,6 +1750,7 @@ async function viewSearch(el, stale) {
     root.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = () => { s.mode = b.dataset.mode; route(); }));
     const wh = root.querySelector("[data-whole]");
     if (wh) wh.onchange = () => { s.whole = wh.checked; route(); };
+    bindFuzzy(root, (k, v) => { if (k === "typos") s.typos = v; else s.nolayout = !v; route(); });
     root.querySelector("[data-o=tol]").oninput = debounce((e) => { s.tol = e.target.value.trim(); route(); }, 450);
     root.querySelectorAll("[data-facet] input").forEach((i) => (i.onchange = () => {
       const k = i.closest("[data-facet]").dataset.facet;
