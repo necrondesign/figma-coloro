@@ -154,6 +154,10 @@ def condition(kind: str, q: dict, con=None) -> tuple[str, list, dict]:
         from . import effects
         c, a = effects.image_condition(q)
         return c, a, {}
+    if kind == "surface":
+        from . import surfaces
+        c, a = surfaces.condition(q, con)
+        return c, a, {}
 
     raise SearchError("Unknown search type")
 

@@ -74,6 +74,7 @@ const DEFAULT_SHOW = {
   typography: { cat: "unbound" },
   spacing: { group: "spacing", cat: "near" },
   effects: { cat: "unbound" },
+  surfaces: { view: "contrast", cat: "fail", ccat: "unusual", q: "" },
   images: { cat: "repeated" },
   components: { cat: "all", q: "", previews: true },
   text: { cat: "all", q: "", mode: "forms", sort: "uses", whole: false, typos: false, nolayout: false },
@@ -412,6 +413,7 @@ const TYPES = [
   { k: "typography", t: "Typography", lv: "text_nostyle_pct", icon: "M3 4h10M8 4v9M5.5 13h5" },
   { k: "text", t: "Text", icon: "M2.5 4h11M2.5 7h11M2.5 10h7M2.5 13h9" },
   { k: "spacing", t: "Spacing & radius", lv: "scale_off_pct", icon: "M3 3v10M13 3v10M6 8h4" },
+  { k: "surfaces", t: "Surfaces", icon: "M2.5 10.5 8 13.5l5.5-3M2.5 7.5 8 10.5l5.5-3L8 4.5z" },
   { k: "effects", t: "Effects", icon: "M4 4h7v7H4zM6 13h7V6" },
   { k: "images", t: "Images", icon: "M2.5 3.5h11v9h-11zM2.5 10l3-3 3 3 2-2 3 3" },
   { k: "components", t: "Components", icon: "M8 2 11 5 8 8 5 5zM8 8l3 3-3 3-3-3z" },
@@ -421,11 +423,43 @@ function drawTypes() {
   const lv = (S.overview && S.overview.totals && S.overview.totals.levels) || {};
   $("#types").innerHTML = TYPES.map((t) => {
     const l = t.lv && lv[t.lv];
-    return `<button class="tbtn ${!S.search && t.k === S.type ? "on" : ""}" data-k="${t.k}" role="tab" aria-label="${t.t}">
-      <svg class="i" viewBox="0 0 16 16"><path d="${t.icon}"/></svg>${l === "bad" || l === "fair" ? `<i class="${l}"></i>` : ""}<span class="tt">${t.t}</span></button>`;
+    const on = !S.search && t.k === S.type;
+    return `<button class="tbtn ${on ? "on" : ""}" data-k="${t.k}" role="tab" aria-selected="${on}" aria-label="${t.t}" title="${on ? "" : t.t}">
+      <svg class="i" viewBox="0 0 16 16"><path d="${t.icon}"/></svg><span class="lbl">${t.t}</span>${l === "bad" || l === "fair" ? `<i class="${l}"></i>` : ""}</button>`;
   }).join("");
   $$("#types .tbtn").forEach((b) => (b.onclick = () => go(b.dataset.k)));
+  const cur = $("#types .tbtn.on");
+  if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
+
+/* The types row scrolls sideways without a scrollbar: by the wheel or by dragging with the mouse. */
+function scrollableRow(row) {
+  row.addEventListener("wheel", (e) => {
+    if (row.scrollWidth <= row.clientWidth) return;
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!d) return;
+    e.preventDefault();
+    row.scrollLeft += d;
+  }, { passive: false });
+  let start = null, moved = false;
+  row.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || row.scrollWidth <= row.clientWidth) return;
+    start = { x: e.clientX, left: row.scrollLeft, id: e.pointerId }; moved = false;
+  });
+  row.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    const dx = e.clientX - start.x;
+    if (!moved && Math.abs(dx) < 4) return;
+    if (!moved) { moved = true; row.classList.add("drag"); row.setPointerCapture(start.id); }
+    row.scrollLeft = start.left - dx;
+  });
+  const end = () => { start = null; setTimeout(() => row.classList.remove("drag"), 0); };
+  row.addEventListener("pointerup", end);
+  row.addEventListener("pointercancel", end);
+  // A drag must not also select the type under the pointer.
+  row.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+}
+scrollableRow($("#types"));
 
 function go(type, show) {
   S.type = type; S.search = null;
@@ -1376,6 +1410,90 @@ async function viewEffects(el, stale) {
   searchPlaces((i) => ({ kind: "effect", type: i.type, color: i.color ?? "", alpha: i.alpha ?? "", x: i.x ?? "", y: i.y ?? "", radius: i.radius ?? "", spread: i.spread ?? "" })));
 }
 
+/* ───────────────────── surfaces ───────────────────── */
+
+const SVIEWS = [["contrast", "Text contrast"], ["surfaces", "Surfaces"], ["components", "Components"]];
+const KCATS = [["fail", "Fails WCAG"], ["unknown", "Check by eye"], ["aa", "AA"], ["aaa", "AAA"], ["all", "All"]];
+const KHINT = {
+  fail: "Text that is hard to read: below 4.5:1, or 3:1 for large text (24 px, or 18.66 px bold).",
+  unknown: "Text on an image, a gradient or the edge of a plate. The contrast depends on the spot, so check it by eye.",
+  aa: "Readable: passes AA, not AAA.", aaa: "Passes AAA: 7:1, or 4.5:1 for large text.", all: "Every text color against its surface.",
+};
+const TONES = { light: "light", dark: "dark", image: "image", gradient: "gradient", mixed: "partly on a plate", none: "no background" };
+const surfCss = (s) => (s.kind === "solid" ? colorCss("#" + s.color) : s.kind === "image" ? "repeating-linear-gradient(45deg,#9a9a9a 0 4px,#c4c4c4 0 8px)" : s.kind === "gradient" ? "linear-gradient(135deg,#7a7ff0,#f07ab8)" : s.kind === "mixed" ? "linear-gradient(90deg,#ececec 50%,#2a2a2e 50%)" : "transparent");
+const onSample = (bg, fg, fa = 100) => `<span class="sample onbg" style="background:${bg}"><b style="color:${colorCss("#" + fg)};opacity:${fa / 100}">Aa</b></span>`;
+const toneBar = (t, total) => `<span class="tonebar">${["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => t[k]).map((k) =>
+  `<i class="t-${k}" style="flex:${t[k]}" title="${esc(TONES[k])}: ${num(t[k])}"></i>`).join("")}</span><small class="muted">${["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => t[k]).map((k) => `${TONES[k]} ${Math.round((t[k] / total) * 100)}%`).join(" · ")}</small>`;
+
+async function viewSurfaces(el, stale) {
+  const sh = S.show.surfaces;
+  const d = await api("/api/surfaces" + fq());
+  if (stale()) return;
+  if (!d.surfaces.length) {
+    $("#tname").innerHTML = "Surfaces";
+    el.innerHTML = `<div class="empty"><b>Surfaces are not computed yet</b>coloro finds what each layer lies on while loading a file. Files loaded with an older version need one update.<br><button class="b main" id="sfUpd">Update</button></div>`;
+    $("#sfUpd").onclick = () => startUpdate({ project: S.project });
+    return;
+  }
+  const T = d.totals, q = (sh.q || "").toLowerCase();
+  const hit = (...xs) => !q || xs.some((x) => String(x || "").toLowerCase().includes(q));
+  $("#tname").innerHTML = `Surfaces<span>${pl(T.surfaces, "surface")}</span>`;
+  const kc = (k) => d.contrast.filter((i) => k === "all" || i.status === k);
+  drawShow(`${seg(SVIEWS, sh.view, "sview")}
+    ${sh.view === "contrast" ? `<div class="sec">Status</div>${chips(KCATS.map(([k, t]) => [k, t, kc(k).reduce((n, i) => n + i.uses, 0)]), sh.cat)}` : ""}
+    ${sh.view === "components" ? `<div class="sec">Show</div>${chips([["unusual", "On an unusual surface", d.components.filter((g) => g.unusual_uses).length], ["all", "All", d.components.length]], sh.ccat, "ccat")}` : ""}
+    <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Hex, token, style or component"></div>
+    <p class="label" style="padding:6px;margin:0">The surface is what a layer lies on: the fill of the nearest frame or of a plate under it. Translucent fills are mixed with what is below, as the eye sees them.</p>`,
+  (root) => {
+    bindShow(root, "surfaces", () => route());
+    root.querySelectorAll("[data-sview]").forEach((b) => (b.onclick = () => { sh.view = b.dataset.sview; save(); route(); }));
+    root.querySelectorAll("[data-ccat]").forEach((b) => (b.onclick = () => { sh.ccat = b.dataset.ccat; save(); route(); }));
+  });
+  const title = sh.view === "contrast" ? `Text contrast · ${KCATS.find(([k]) => k === sh.cat)[1]}` : sh.view === "surfaces" ? "Surfaces" : sh.ccat === "unusual" ? "Components on an unusual surface" : "Components by surface";
+  const hint = sh.view === "contrast" ? KHINT[sh.cat] : sh.view === "surfaces" ? "Every background in the files and what is placed on it. Click a row to see the places."
+    : "Where each component stands: on light, dark, images or gradients. A component that almost always stands on light and sometimes on dark probably needs another variant there.";
+  el.innerHTML = `<div class="head"><div class="grow"><h1>${esc(title)}</h1><p class="sub">${esc(hint)}</p></div></div><div class="list" id="list"></div>`;
+  {
+    const go = (view, cat) => () => { sh.view = view; if (view === "contrast") sh.cat = cat; else sh.ccat = cat; sh.q = ""; save(); route(); };
+    summary(el, {
+      tiles: [{ t: "Texts checked", v: num(T.texts), sub: `on ${pl(T.surfaces, "surface")}` },
+        { t: "Fail WCAG", v: num(T.fail), sub: T.texts ? `${pct((T.fail / T.texts) * 100)} of texts` : "" },
+        { t: "Check by eye", v: num(T.unknown), sub: "on images, gradients, plate edges" },
+        { t: "Unusual placements", v: num(T.unusual), sub: `of ${pl(T.placed, "component")} placed` }],
+      recs: [
+        { n: T.fail, title: `Fix the contrast of ${pl(T.fail, "text")}`, text: "Below the WCAG AA minimum: hard to read for many people, and in sunlight for everyone. Use a darker or lighter text token for this surface.", go: go("contrast", "fail") },
+        { n: T.unusual, title: `Check ${pl(T.unusual, "component")} on an unusual surface`, text: "The component almost always stands on light (or dark) and here it does not. Usually another variant is meant.", go: go("components", "unusual") },
+        { n: T.unknown, title: `Check ${pl(T.unknown, "text")} by eye`, text: "On images, gradients or the edge of a plate the contrast depends on the spot. A scrim or a whole plate under the text makes it safe.", go: go("contrast", "unknown") },
+      ],
+    });
+  }
+  const list = $("#list");
+  if (sh.view === "contrast") {
+    const items = kc(sh.cat).filter((i) => hit(i.color, i.bg_color, i.surface, ...(i.fg_tokens || [])));
+    const tag = { fail: '<span class="tag off">Fails</span>', aa: '<span class="tag near">AA</span>', aaa: '<span class="tag ok">AAA</span>', unknown: '<span class="tag plain">Check by eye</span>' };
+    rowsWithPlaces(list, items, (i, n) => `<div class="crow" data-n="${n}">${onSample(surfCss({ kind: i.bg_kind, color: i.bg_color }), i.color, i.alpha)}
+        <div class="name"><b>${esc((i.fg_tokens || [])[0] || "#" + i.color + (i.alpha < 100 ? ` ${i.alpha}%` : ""))}</b> on <b>${esc(i.surface)}</b><small>${i.large ? "large text" : "normal text"}${i.outline ? ` · outlined <span class="mono">#${esc(i.outline)}</span>` : ""}${i.ratio != null ? ` · needs ${i.need}:1` : ""}</small></div>
+        ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "text" })}
+        <div class="what">${tag[i.status]}${i.ratio != null ? `<b>${i.ratio}:1</b>` : ""}</div></div>`,
+    searchPlaces((i) => ({ kind: "surface", what: "text", bg: i.bg ?? "none", fg: i.fg })));
+  } else if (sh.view === "surfaces") {
+    const items = d.surfaces.filter((s) => hit(s.color, s.name, ...(s.tokens || []), ...s.top_components.map((c) => c.name)));
+    rowsWithPlaces(list, items, (s, n) => `<div class="crow" data-n="${n}"><span class="sample" style="background:${surfCss(s)};border:1px solid var(--line)"></span>
+        <div class="name"><b>${esc(s.name)}</b><small>${s.kind === "solid" ? `<span class="mono">#${esc(s.color)}${s.alpha < 100 ? " " + s.alpha + "%" : ""}</span> · ${s.src ? (s.src === "v" ? "variable" : "style") : (s.tokens || []).length ? "token value set by hand" : "set by hand"} · ${esc(TONES[s.tone])}` : esc(TONES[s.tone])}</small></div>
+        <div class="num">${num(s.texts)} <span class="muted">texts</span></div><div class="num c-screens">${num(s.components)} <span class="muted">components</span></div>
+        <div class="num c-files">${s.fail ? `<span class="dn">${num(s.fail)} fail</span>` : ""}</div>
+        <div class="what"><span class="onrow">${s.text_colors.slice(0, 6).map((c) => onSample(surfCss(s), c.color, c.alpha)).join("")}</span>${s.top_components.slice(0, 3).map((c) => esc(c.name)).join(", ")}</div></div>`,
+    searchPlaces((s) => ({ kind: "surface", bg: s.bg ?? "none" })));
+  } else {
+    const items = d.components.filter((g) => (sh.ccat === "all" || g.unusual_uses) && hit(g.name));
+    rowsWithPlaces(list, items, (g, n) => `<div class="crow" data-n="${n}"><span class="sample">${esc((g.name || "?").slice(0, 1))}</span>
+        <div class="name"><b>${esc(g.name)}</b><small>${toneBar(g.tones, g.uses)}</small></div>
+        ${counts({ uses: g.uses, screens: g.screens, files: g.files, unit: "place" })}
+        <div class="what">${g.unusual.length ? g.unusual.map((u) => `<span class="tag near">Unusual</span><b>${num(u.uses)}</b> on ${esc(TONES[u.tone])}`).join(" ") : '<span class="muted">Consistent</span>'}</div></div>`,
+    searchPlaces((g) => ({ kind: "surface", what: "component", [g.kind]: g.name, bgs: g.unusual.flatMap((u) => u.bgs).join(",") })));
+  }
+}
+
 /* ───────────────────── images ───────────────────── */
 
 const MODES = { FILL: "fill", FIT: "fit", CROP: "crop", TILE: "tile", STRETCH: "stretch" };
@@ -1862,7 +1980,7 @@ function openSettings() {
     try { await api("/api/settings", { workers: +e.target.value }); toast("Saved"); S.st = await api("/api/state"); }
     catch (err) { toast(err.message, "err"); }
   };
-  $("#forceAll").onclick = () => { $("#veil").hidden = true; startUpdate({ project: S.project, force: true }); };
+  $("#forceAll").onclick = () => { $("#veil").hidden = true; startUpdate({ project: S.project }); };
 }
 $("#gear").onclick = openSettings;
 $("#closeDlg").onclick = closeDialog;
@@ -1870,7 +1988,7 @@ $("#veil").onclick = (e) => { if (e.target.id === "veil") closeDialog(); };
 
 /* ───────────────────── start ───────────────────── */
 
-const VIEWS = { colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
+const VIEWS = { surfaces: viewSurfaces, colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
   images: viewImages, components: viewComponents, search: viewSearch };
 
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });

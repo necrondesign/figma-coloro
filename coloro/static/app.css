@@ -93,8 +93,13 @@ select.in{padding:6px 8px}
 .fmenu{position:absolute;right:6px;top:100%;z-index:6;width:220px}
 
 /* right: content types as a row of icons */
-.types{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;padding:0 14px 2px}
-.tbtn{position:relative;height:36px;border:0;border-radius:var(--r-sm);background:none;color:var(--label);cursor:pointer;display:grid;place-items:center}
+/* Типы контента — одной строкой: у выбранного подпись, остальные — иконки; не влезло — прокрутка вбок. */
+.types{display:flex;gap:2px;padding:0 14px 4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;cursor:grab;user-select:none}
+.types::-webkit-scrollbar{display:none}
+.types.drag,.types.drag .tbtn{cursor:grabbing}
+.tbtn{position:relative;flex:none;min-width:36px;height:36px;padding:0 9px;border:0;border-radius:var(--r-sm);background:none;color:var(--label);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+.tbtn .lbl{display:none;font-size:12px;font-weight:600;white-space:nowrap}
+.tbtn.on .lbl{display:inline}
 .tbtn:hover{background:var(--btn);color:var(--txt)}
 .tbtn.on{background:var(--btn);color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent)}
 .tbtn svg.i{width:18px;height:18px}
@@ -102,9 +107,7 @@ select.in{padding:6px 8px}
 .tbtn i.fair{background:var(--warn)}
 .tbtn .tt,.mini .tip{position:absolute;white-space:nowrap;background:var(--panel);box-shadow:var(--shadow-lg);padding:4px 8px;border-radius:5px;
   font-size:11px;color:var(--txt);opacity:0;pointer-events:none;transition:opacity .12s;z-index:3}
-.tbtn .tt{top:40px;left:50%;transform:translateX(-50%)}
-.tbtn:first-child .tt{left:0;transform:none} .tbtn:last-child .tt{left:auto;right:0;transform:none}
-.tbtn:hover .tt{opacity:1}
+.tbtn .tt{display:none}
 .tname{display:flex;align-items:baseline;gap:6px;padding:10px 6px 0;font-weight:600;font-size:13px}
 .tname span{font-weight:400;font-size:11px;color:var(--muted)}
 .chips{display:flex;flex-wrap:wrap;gap:4px;padding:0 6px}
@@ -205,6 +208,11 @@ button.tile{cursor:pointer} button.tile:hover{background:var(--btn)}
 .sample i{position:absolute;inset:0;border-radius:inherit;border:1px solid var(--line)}
 .sample.eff{background:#ececec} .sample.eff i{position:static;width:16px;height:16px;border-radius:3px;background:#fff;border:0}
 .sample img{width:100%;height:100%;object-fit:cover}
+.sample.onbg{border:1px solid var(--line)} .sample.onbg b{font-size:12px;font-weight:600}
+.onrow{display:inline-flex;gap:3px;margin-right:6px;vertical-align:middle} .onrow .sample{width:22px;height:22px} .onrow .sample b{font-size:9px}
+.tonebar{display:flex;height:6px;border-radius:3px;overflow:hidden;width:160px;margin:3px 0;background:var(--btn)}
+.tonebar i{display:block;height:100%} .tonebar .t-light{background:#ececec} .tonebar .t-dark{background:#2a2a2e}
+.tonebar .t-image{background:#9a9a9a} .tonebar .t-gradient{background:linear-gradient(90deg,#7a7ff0,#f07ab8)} .tonebar .t-none{background:transparent} .tonebar .t-mixed{background:linear-gradient(90deg,#ececec 50%,#2a2a2e 50%)}
 .gbar{height:30px;border-radius:var(--r-sm);border:1px solid var(--line)}
 .stops{display:flex;gap:3px;flex-wrap:wrap}
 .stops code{font-size:10.5px;background:var(--btn);border-radius:4px;padding:1px 4px}

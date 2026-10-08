@@ -17,7 +17,7 @@ from .textnorm import norm, whole_words
 
 # Формат данных. Поднимается, когда меняется то, что извлекается из макета:
 # файлы, загруженные в старом формате, при следующем обновлении перезагружаются.
-FORMAT = 7
+FORMAT = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT) WITHOUT ROWID;
@@ -69,12 +69,14 @@ CREATE TABLE IF NOT EXISTS pages (
 --            инстанса id составной, и ссылка на них не работает — ведём на инстанс)
 --   ovr   — у инстанса есть переопределения относительно мастер-компонента
 --   tnorm, nnorm — текст и название в нижнем регистре, «ё» как «е»: по ним идёт поиск
+--   bg    — поверхность под слоем (номер в vals): «RRGGBB[@прозрачность][|источник]», image, gradient
+--   fg    — цвет букв текста (номер в vals): «RRGGBB@прозрачность»
 CREATE TABLE IF NOT EXISTS nodes (
     file_key TEXT, page_id TEXT, id TEXT, parent_id TEXT, type TEXT, name TEXT,
     hid INTEGER, sect INTEGER, pinst TEXT, comp TEXT, text TEXT,
     x INTEGER, y INTEGER, w INTEGER, h INTEGER,
     font INTEGER, tstyle INTEGER, first_seen TEXT, screen TEXT, anchor TEXT,
-    ovr INTEGER, tnorm TEXT, nnorm TEXT,
+    ovr INTEGER, tnorm TEXT, nnorm TEXT, bg INTEGER, fg INTEGER,
     PRIMARY KEY (file_key, id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS nodes_page ON nodes (file_key, page_id);
@@ -143,7 +145,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 
 # Колонки, добавленные после первого формата: в старой базе их дописываем, а сами данные
 # обновятся при следующей загрузке — формат поднят, и файлы перезагрузятся.
-_ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"), ("ovr", "INTEGER"), ("tnorm", "TEXT"), ("nnorm", "TEXT")),
+_ADDED = {"nodes": (("screen", "TEXT"), ("anchor", "TEXT"), ("ovr", "INTEGER"), ("tnorm", "TEXT"), ("nnorm", "TEXT"), ("bg", "INTEGER"), ("fg", "INTEGER")),
           "files": (("pages", "TEXT"),),
           "sources": (("project_id", "INTEGER"),),
           "tokens": (("project_id", "INTEGER"), ("type", "TEXT"), ("value", "TEXT"), ("scope", "TEXT"), ("library", "TEXT"), ("key", "TEXT")),

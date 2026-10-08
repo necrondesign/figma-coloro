@@ -31,7 +31,7 @@ from .walk import Ctx, Out, child_ctx, walk
 BATCH = 8          # верхних слоёв страницы в одном запросе
 MAX_DEPTH = 40     # насколько глубоко можно раскрывать один слой, если он не скачивается целиком
 
-NODE_COLS = 23
+NODE_COLS = 25
 PAINT_COLS = 16
 
 
@@ -68,7 +68,7 @@ def _fetch_into(figma: Figma, key: str, ids: list[str], ctx: Ctx, styles: dict, 
         walk(node, ctx, styles, intern, first_seen, now, out, children=False)
         kids = [k.get("id") for k in node.get("children") or [] if k.get("id")]
         for i in range(0, len(kids), BATCH):
-            _fetch_into(figma, key, kids[i:i + BATCH], child_ctx(node, ctx), styles, intern,
+            _fetch_into(figma, key, kids[i:i + BATCH], child_ctx(node, ctx, styles), styles, intern,
                         first_seen, now, out, stop, depth + 1)
         return
     for nid in ids:

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .textnorm import norm
@@ -38,6 +39,7 @@ class Ctx:
     screen: str | None = None                  # экран, в который входит поддерево
     anchor: str | None = None                  # ближайший предок, на которого ведёт ссылка
     modes: str | None = None                   # темы переменных, включённые у предков: «коллекция=режим;…»
+    bg: tuple | None = None                    # поверхность под поддеревом (см. surface_of)
 
 
 @dataclass
@@ -145,6 +147,176 @@ def paints_of(node: dict, styles: dict, intern) -> list[tuple]:
     return out
 
 
+# ---------------------------------------------------------------- поверхности
+#
+# Поверхность — то, на чём слой лежит на экране: заливка ближайшего родителя или подложки,
+# которая лежит под слоем соседом (прямоугольник-фон в группе). Полупрозрачная заливка
+# смешивается с тем, что под ней, — получается цвет, который видит глаз. Поверхность —
+# кортеж (вид, RRGGBB, прозрачность, источник): вид solid | image | gradient; источник —
+# «s:стиль», «v» (переменная) или None (набран вручную).
+
+# Чья заливка служит фоном тому, что внутри или поверх: у текста и иконок заливка — это цвет
+# букв и линий, фоном она не бывает. Секция — область на холсте, а не часть интерфейса:
+# компонент, выложенный на тёмную секцию для документации, в продукте стоит на другом фоне.
+BACKDROP_TYPES = ("FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE", "RECTANGLE", "ELLIPSE")
+COVER_SHARE = 0.9                       # подложка закрывает почти весь слой
+MIXED_SHARE = 0.1                       # частично закрытый слой лежит на смешанном фоне
+# Фигуры служат подложкой, только когда лежат под слоем целиком: значок-медаль под цифрой.
+SHAPE_TYPES = ("VECTOR", "STAR", "POLYGON", "REGULAR_POLYGON", "BOOLEAN_OPERATION")
+# В ком искать подложку среди детей, если у него самого заливки нет.
+_HOLDERS = ("GROUP", "FRAME", "INSTANCE", "COMPONENT", "BOOLEAN_OPERATION")
+MAX_SIBLINGS = 60                       # сколько соседей снизу проверять в поисках подложки
+
+
+def _blend(top: str, a: float, base: str) -> str:
+    t = [int(top[i:i + 2], 16) for i in (0, 2, 4)]
+    b = [int(base[i:i + 2], 16) for i in (0, 2, 4)]
+    return "%02X%02X%02X" % tuple(int(round(x * a + y * (1 - a))) for x, y in zip(t, b))
+
+
+def surface_of(node: dict, base: tuple | None, styles: dict, shapes: bool = False) -> tuple | None:
+    """Поверхность, которую заливки слоя создают поверх base. None — у слоя нет видимой заливки:
+    сквозь него видно то, что под ним. shapes — считать фоном и векторные фигуры."""
+    kinds = BACKDROP_TYPES + SHAPE_TYPES if shapes else BACKDROP_TYPES
+    if node.get("type") not in kinds or node.get("visible") is False or node.get("isMask"):
+        return None
+    fills = node.get("fills")
+    if not isinstance(fills, list):
+        return None
+    op = node.get("opacity") if isinstance(node.get("opacity"), (int, float)) else 1
+    st = node.get("styles") or {}
+    sid = st.get("fill") or st.get("fills")
+    style_src = "s:" + _style_name(styles, sid) if sid else None
+    bv = (node.get("boundVariables") or {}).get("fills") or []
+    cur, changed = base, False
+    for i, p in enumerate(fills):                    # снизу вверх: последняя заливка — верхняя
+        if not isinstance(p, dict) or p.get("visible") is False:
+            continue
+        t = p.get("type") or ""
+        if t == "SOLID":
+            c = p.get("color") or {}
+            a = (c.get("a") if c.get("a") is not None else 1) * (p.get("opacity") if p.get("opacity") is not None else 1) * op
+            if a <= 0.02:
+                continue
+            var = (i < len(bv) and bv[i]) or (p.get("boundVariables") or {}).get("color")
+            src = style_src or ("v" if var else None)
+            hexv = _hex(c)
+            if a >= 0.98:
+                cur = ("solid", hexv, 100, src)
+            elif cur and cur[0] == "solid" and cur[2] >= 98:
+                cur = ("solid", _blend(hexv, a, cur[1]), 100, src)
+            elif cur and cur[0] in ("image", "gradient", "mixed"):
+                cur = (cur[0], None, 100, None)        # затемнение поверх картинки — всё ещё картинка
+            else:
+                cur = ("solid", hexv, _pct(a), src)
+            changed = True
+        elif t.startswith("GRADIENT") or t == "IMAGE":
+            if (p.get("opacity") if p.get("opacity") is not None else 1) * op < 0.5 and cur:
+                continue
+            cur = ("gradient" if t.startswith("GRADIENT") else "image", None, 100, None)
+            changed = True
+    return cur if changed else None
+
+
+def _box(node: dict):
+    b = node.get("absoluteBoundingBox") or {}
+    if b.get("width") is None:
+        return None
+    return (b.get("x") or 0, b.get("y") or 0, b.get("width") or 0, b.get("height") or 0)
+
+
+def _share(inner, outer) -> float:
+    """Какую долю рамки слоя закрывает другой слой."""
+    if inner is None or outer is None:
+        return 0.0
+    w = min(inner[0] + inner[2], outer[0] + outer[2]) - max(inner[0], outer[0])
+    h = min(inner[1] + inner[3], outer[1] + outer[3]) - max(inner[1], outer[1])
+    if w <= 0 or h <= 0:
+        return 0.0
+    return w * h / (max(inner[2], 0.01) * max(inner[3], 0.01))
+
+
+def _inside(inner, outer) -> bool:
+    """Лежит ли слой на подложке: она закрывает почти всю его рамку. Цифра на значке
+    часто выступает за край на пиксель-другой — она всё равно на значке."""
+    return _share(inner, outer) >= COVER_SHARE
+
+
+def _cover(node: dict, box, base, styles: dict, depth: int = 2):
+    """Подложка от соседа снизу: его заливка, если он целиком под слоем; у группы без заливки —
+    верхний из её детей, который целиком под слоем."""
+    if node.get("visible") is False or node.get("isMask") or not _inside(box, _box(node)):
+        return None
+    own = surface_of(node, base, styles, shapes=True)
+    if own is not None:
+        return own
+    if depth > 0 and node.get("type") in _HOLDERS:
+        for kid in reversed(node.get("children") or []):
+            got = _cover(kid, box, base, styles, depth - 1)
+            if got is not None:
+                return got
+    return None
+
+
+def kid_surfaces(node: dict, bg: tuple | None, styles: dict) -> list:
+    """Поверхность под каждым ребёнком слоя: заливка самого слоя или подложка-сосед."""
+    base = surface_of(node, bg, styles) or bg
+    kids = node.get("children") or []
+    out = []
+    for i, kid in enumerate(kids):
+        got = None
+        box = _box(kid)
+        if box is not None and i:
+            for prev in reversed(kids[max(0, i - MAX_SIBLINGS):i]):
+                got = _cover(prev, box, base, styles)
+                if got is not None:
+                    break
+                # Подложка закрывает слой лишь частично: часть букв на ней, часть — нет.
+                if MIXED_SHARE < _share(box, _box(prev)) < COVER_SHARE and prev.get("visible") is not False:
+                    own = surface_of(prev, base, styles, shapes=True)
+                    if own is not None and own[:2] != (base or (None, None))[:2]:
+                        got = ("mixed", None, 100, None)
+                        break
+        out.append(got or base)
+    return out
+
+
+_LETTERS = re.compile(r"[^\W_]")
+
+
+def text_color(node: dict) -> str | None:
+    """Цвет букв: верхняя видимая сплошная заливка текста с её прозрачностью — «RRGGBB@aa»,
+    а если у букв есть обводка — ещё «~RRGGBB»: обводка отделяет текст от фона не хуже заливки.
+    Эмодзи рисуются своими цветами — у текста из одних эмодзи цвета букв нет."""
+    if not _LETTERS.search(node.get("characters") or ""):
+        return None
+    op = node.get("opacity") if isinstance(node.get("opacity"), (int, float)) else 1
+
+    def top(paints):
+        for p in reversed(paints or []):
+            if isinstance(p, dict) and p.get("visible") is not False and p.get("type") == "SOLID":
+                c = p.get("color") or {}
+                return c, (c.get("a") if c.get("a") is not None else 1) * (p.get("opacity") if p.get("opacity") is not None else 1) * op
+        return None, 0
+    c, a = top(node.get("fills"))
+    if c is None:
+        return None
+    out = f"{_hex(c)}@{_pct(a)}"
+    sc, sa = top(node.get("strokes"))
+    if sc is not None and sa >= 0.9 and (node.get("strokeWeight") or 0) >= 1:
+        out += "~" + _hex(sc)
+    return out
+
+
+def surface_key(s: tuple | None) -> str | None:
+    """Поверхность → строка для базы: «RRGGBB», «RRGGBB@50», с «|источник»; «image», «gradient»."""
+    if not s:
+        return None
+    if s[0] != "solid":                         # image, gradient, mixed
+        return s[0]
+    return s[1] + (f"@{s[2]}" if s[2] < 100 else "") + (f"|{s[3]}" if s[3] else "")
+
+
 def _px(v):
     return round(float(v), 2) if isinstance(v, (int, float)) else None
 
@@ -220,9 +392,9 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
 
     children=False — записать только сам узел: его детей загрузчик скачает отдельно.
     """
-    stack = [(root, ctx.parent_id, ctx.hidden, ctx.sections, ctx.pinst, ctx.screen, ctx.anchor, ctx.modes)]
+    stack = [(root, ctx.parent_id, ctx.hidden, ctx.sections, ctx.pinst, ctx.screen, ctx.anchor, ctx.modes, ctx.bg)]
     while stack:
-        node, parent, hidden_above, sections, pinst, screen, anchor, modes = stack.pop()
+        node, parent, hidden_above, sections, pinst, screen, anchor, modes, bg = stack.pop()
         modes = with_modes(modes, node)
         nid = node.get("id") or ""
         ntype = node.get("type") or ""
@@ -250,6 +422,8 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
             (1 if node.get("overrides") else 0) if ntype == "INSTANCE" else None,
             norm(node.get("characters")) if is_text else None,
             norm(name),
+            intern(surface_key(bg)) if bg else None,
+            intern(text_color(node)) if is_text else None,
         ))
         row = out.nodes[-1]
         # Поля фильтров — прямо у краски: тогда цвета считаются без обращения к слоям,
@@ -274,11 +448,11 @@ def walk(root: dict, ctx: Ctx, styles: dict, intern, first_seen: dict, now: str,
         if kids:
             child_sections = sections + (name,) if ntype == "SECTION" else sections
             child_pinst = nid if ntype == "INSTANCE" else pinst
-            for kid in reversed(kids):
-                stack.append((kid, nid, hidden, child_sections, child_pinst, screen, anchor, modes))
+            for kid, kbg in reversed(list(zip(kids, kid_surfaces(node, bg, styles)))):
+                stack.append((kid, nid, hidden, child_sections, child_pinst, screen, anchor, modes, kbg))
 
 
-def child_ctx(node: dict, ctx: Ctx) -> Ctx:
+def child_ctx(node: dict, ctx: Ctx, styles: dict | None = None) -> Ctx:
     """Контекст для детей узла, когда дети скачиваются отдельно от него."""
     ntype = node.get("type") or ""
     nid = node.get("id") or ""
@@ -290,4 +464,5 @@ def child_ctx(node: dict, ctx: Ctx) -> Ctx:
         screen=ctx.screen or (nid if ntype in SCREEN_TYPES else None),
         anchor=nid if plain_id(nid) else ctx.anchor,
         modes=with_modes(ctx.modes, node),
+        bg=surface_of(node, ctx.bg, styles or {}) or ctx.bg,
     )

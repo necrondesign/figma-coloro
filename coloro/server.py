@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import db as dbm
-from . import effects, health, inspect, inventory, memo, report, rules, scales, search, tokens, typography
+from . import effects, health, inspect, inventory, memo, report, rules, scales, search, surfaces, tokens, typography
 from .figma import Figma, FigmaError
 from .filters import NODE_JOIN, Filter
 from .load import update_all
@@ -480,6 +480,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(remember("detached", lambda: search.detached(con, filt)))
         if path == "/api/scales":
             return self._json(remember("scales", lambda: scales.report(con, filt)))
+        if path == "/api/surfaces":
+            return self._json(remember("surfaces", lambda: surfaces.report(con, filt, idx)))
         if path == "/api/effects":
             return self._json(remember("effects", lambda: effects.report(con, filt)))
         if path == "/api/images":
