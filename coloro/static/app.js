@@ -304,7 +304,6 @@ function drawFiles() {
 }
 
 $("#export").onclick = () => toast("Building the report. Large projects take up to 20 seconds.");
-$("#allFiles").onclick = () => { S.off[S.project] = []; save(); drawFiles(); reload(); };
 /** Добавить файлы в текущий проект: несколько ссылок сразу, страницы и токен, если его нет. */
 function addFilesDialog() {
   const p = project();
