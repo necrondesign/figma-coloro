@@ -41,6 +41,12 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 #left{left:var(--gap);width:var(--lw)} #right{right:var(--gap);width:var(--rw)}
 body.l-closed #left{transform:translateX(calc(-100% - 24px));opacity:0;pointer-events:none}
 body.r-closed #right{transform:translateX(calc(100% + 24px));opacity:0;pointer-events:none}
+/* Правая сторона — три плавающих блока один под другим; сворачиваются вместе, как один. */
+.panel.stack{background:none;box-shadow:none;border-radius:0;gap:8px}
+.blk{background:var(--panel);border-radius:var(--r);box-shadow:var(--shadow-lg);flex:none}
+.blk.grow-blk{flex:1;min-height:0;display:flex;flex-direction:column}
+.blk .ph{padding:8px 8px 8px 12px}
+.blk.grow-blk .scroll{padding-top:4px}
 .ph{display:flex;align-items:center;gap:6px;padding:12px 12px 8px}
 .brand,.title{font-weight:600;font-size:13px}
 .ib{width:28px;height:28px;border:0;border-radius:var(--r-sm);background:transparent;display:grid;place-items:center;cursor:pointer;color:var(--label);flex:none}
@@ -93,17 +99,16 @@ select.in{padding:6px 8px}
 .fmenu{position:absolute;right:6px;top:100%;z-index:6;width:220px}
 
 /* right: content types as a row of icons */
-/* Типы контента — одной строкой: у выбранного подпись, остальные — иконки; не влезло — прокрутка вбок. */
-.types{display:flex;gap:2px;padding:0 14px 4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;cursor:grab;user-select:none}
-.types::-webkit-scrollbar{display:none}
-.types.drag,.types.drag .tbtn{cursor:grabbing}
-.tbtn{position:relative;flex:none;min-width:36px;height:36px;padding:0 9px;border:0;border-radius:var(--r-sm);background:none;color:var(--label);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
-.tbtn .lbl{display:none;font-size:12px;font-weight:600;white-space:nowrap}
-.tbtn.on .lbl{display:inline}
-.tbtn:hover{background:var(--btn);color:var(--txt)}
-.tbtn.on{background:var(--btn);color:var(--txt);box-shadow:inset 0 -2px 0 var(--accent)}
+/* Типы контента — плитки как в Booster: три в ряд, иконка сверху, подпись снизу; выбранная — синяя. */
+.types{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:8px}
+.tbtn{position:relative;height:50px;padding:7px 8px 6px;border:0;border-radius:var(--r-sm);background:var(--btn);color:var(--icon,var(--txt));cursor:pointer;
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;transition:background .12s,transform .08s}
+.tbtn:active{transform:scale(.96)}
+.tbtn .lbl{font-size:10px;color:var(--label);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.tbtn:hover{background:var(--btn-hover,var(--line));color:var(--txt)}
+.tbtn.on,.tbtn.on:hover{background:var(--accent);color:#fff} .tbtn.on .lbl{color:#fff}
 .tbtn svg.i{width:18px;height:18px}
-.tbtn i{position:absolute;top:6px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--bad)}
+.tbtn i{position:absolute;top:7px;right:7px;width:6px;height:6px;border-radius:50%;background:var(--bad)}
 .tbtn i.fair{background:var(--warn)}
 .tbtn .tt,.mini .tip{position:absolute;white-space:nowrap;background:var(--panel);box-shadow:var(--shadow-lg);padding:4px 8px;border-radius:5px;
   font-size:11px;color:var(--txt);opacity:0;pointer-events:none;transition:opacity .12s;z-index:3}

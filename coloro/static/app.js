@@ -412,7 +412,7 @@ const TYPES = [
   { k: "tokens", t: "Tokens", icon: "M5 3.5H4a1 1 0 0 0-1 1V7l-1 1 1 1v2.5a1 1 0 0 0 1 1h1M11 3.5h1a1 1 0 0 1 1 1V7l1 1-1 1v2.5a1 1 0 0 1-1 1h-1" },
   { k: "typography", t: "Typography", lv: "text_nostyle_pct", icon: "M3 4h10M8 4v9M5.5 13h5" },
   { k: "text", t: "Text", icon: "M2.5 4h11M2.5 7h11M2.5 10h7M2.5 13h9" },
-  { k: "spacing", t: "Spacing & radius", lv: "scale_off_pct", icon: "M3 3v10M13 3v10M6 8h4" },
+  { k: "spacing", t: "Spacing & radius", short: "Spacing", lv: "scale_off_pct", icon: "M3 3v10M13 3v10M6 8h4" },
   { k: "surfaces", t: "Surfaces", icon: "M2.5 10.5 8 13.5l5.5-3M2.5 7.5 8 10.5l5.5-3L8 4.5z" },
   { k: "effects", t: "Effects", icon: "M4 4h7v7H4zM6 13h7V6" },
   { k: "images", t: "Images", icon: "M2.5 3.5h11v9h-11zM2.5 10l3-3 3 3 2-2 3 3" },
@@ -424,42 +424,11 @@ function drawTypes() {
   $("#types").innerHTML = TYPES.map((t) => {
     const l = t.lv && lv[t.lv];
     const on = !S.search && t.k === S.type;
-    return `<button class="tbtn ${on ? "on" : ""}" data-k="${t.k}" role="tab" aria-selected="${on}" aria-label="${t.t}" title="${on ? "" : t.t}">
-      <svg class="i" viewBox="0 0 16 16"><path d="${t.icon}"/></svg><span class="lbl">${t.t}</span>${l === "bad" || l === "fair" ? `<i class="${l}"></i>` : ""}</button>`;
+    return `<button class="tbtn ${on ? "on" : ""}" data-k="${t.k}" role="tab" aria-selected="${on}" aria-label="${t.t}" title="${t.t}">
+      <svg class="i" viewBox="0 0 16 16"><path d="${t.icon}"/></svg><span class="lbl">${t.short || t.t}</span>${l === "bad" || l === "fair" ? `<i class="${l}"></i>` : ""}</button>`;
   }).join("");
   $$("#types .tbtn").forEach((b) => (b.onclick = () => go(b.dataset.k)));
-  const cur = $("#types .tbtn.on");
-  if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
-
-/* The types row scrolls sideways without a scrollbar: by the wheel or by dragging with the mouse. */
-function scrollableRow(row) {
-  row.addEventListener("wheel", (e) => {
-    if (row.scrollWidth <= row.clientWidth) return;
-    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-    if (!d) return;
-    e.preventDefault();
-    row.scrollLeft += d;
-  }, { passive: false });
-  let start = null, moved = false;
-  row.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0 || row.scrollWidth <= row.clientWidth) return;
-    start = { x: e.clientX, left: row.scrollLeft, id: e.pointerId }; moved = false;
-  });
-  row.addEventListener("pointermove", (e) => {
-    if (!start) return;
-    const dx = e.clientX - start.x;
-    if (!moved && Math.abs(dx) < 4) return;
-    if (!moved) { moved = true; row.classList.add("drag"); row.setPointerCapture(start.id); }
-    row.scrollLeft = start.left - dx;
-  });
-  const end = () => { start = null; setTimeout(() => row.classList.remove("drag"), 0); };
-  row.addEventListener("pointerup", end);
-  row.addEventListener("pointercancel", end);
-  // A drag must not also select the type under the pointer.
-  row.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
-}
-scrollableRow($("#types"));
 
 function go(type, show) {
   S.type = type; S.search = null;
