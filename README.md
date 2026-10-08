@@ -60,11 +60,12 @@ style, off the system — with what exactly the system is missing.
 **Spacing, radii, strokes.** Numbers against the scale. The scale comes from values already
 bound to variables, or a conventional grid when there are none (spacing in steps of 4).
 
-**Surfaces.** What lies on what. For every layer coloro knows its surface: the fill of the nearest
-frame or of a plate under it, with translucent fills mixed as the eye sees them. Text colour against
-its surface by WCAG (fails, AA, AAA; text on images and gradients is marked to check by eye), every
-background with what is placed on it, and components on an unusual surface: a button that almost
-always stands on light and here stands on dark.
+**Surfaces.** What lies on what. For every layer the tool knows its surface: the fill of the nearest
+frame or of a plate under it, with translucent fills mixed as the eye sees them. In Colors: text
+colour against its surface by WCAG (fails, AA, AAA; text on images and gradients is marked to check
+by eye) and every background with what is placed on it. In Components: the surfaces each component
+stands on, and components on an unusual surface — a button that almost always stands on light and
+here stands on dark.
 
 **Shadows and effects.** Hand-made effects against effect styles.
 

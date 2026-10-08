@@ -74,16 +74,19 @@ const DEFAULT_SHOW = {
   typography: { cat: "unbound" },
   spacing: { group: "spacing", cat: "near" },
   effects: { cat: "unbound" },
-  surfaces: { view: "contrast", cat: "fail", ccat: "unusual", q: "" },
+  surfaces: { cat: "fail", q: "" },
   comments: { cat: "open", sort: "newest", author: "", file: "", group: false, q: "" },
   images: { cat: "repeated" },
   components: { cat: "all", q: "", previews: true },
   text: { cat: "all", q: "", mode: "forms", sort: "uses", whole: false, typos: false, nolayout: false },
 };
+/* На каких поверхностях стоит каждый компонент — из /api/surfaces, для раздела компонентов. */
+let SURF_OF = {};
+const unusualOf = (g) => (SURF_OF[g.set || g.cname] || {}).unusual_uses || 0;
 const S = {
   st: null,
   project: LS.get("project", null),
-  type: ((t) => (t === "overview" ? "colors" : t))(LS.get("type", "colors")),
+  type: ((t) => (t === "overview" || t === "surfaces" ? "colors" : t))(LS.get("type", "colors")),
   filters: { ...DEFAULT_F, ...LS.get("filters", {}) },
   show: Object.fromEntries(Object.entries(DEFAULT_SHOW).map(([k, v]) => [k, { ...v, ...(LS.get("show", {})[k] || {}) }])),
   off: LS.get("off", {}),          // project → file keys switched off in the left panel
@@ -413,7 +416,6 @@ const TYPES = [
   { k: "typography", t: "Typography", lv: "text_nostyle_pct", icon: "M3 4h10M8 4v9M5.5 13h5" },
   { k: "text", t: "Text", icon: "M2.5 4h11M2.5 7h11M2.5 10h7M2.5 13h9" },
   { k: "spacing", t: "Spacing & radius", short: "Spacing", lv: "scale_off_pct", icon: "M3 3v10M13 3v10M6 8h4" },
-  { k: "surfaces", t: "Surfaces", icon: "M2.5 10.5 8 13.5l5.5-3M2.5 7.5 8 10.5l5.5-3L8 4.5z" },
   { k: "effects", t: "Effects", icon: "M4 4h7v7H4zM6 13h7V6" },
   { k: "images", t: "Images", icon: "M2.5 3.5h11v9h-11zM2.5 10l3-3 3 3 2-2 3 3" },
   { k: "comments", t: "Comments", icon: "M3 3.5h10v7H7.5L4.5 13v-2.5H3z" },
@@ -583,6 +585,9 @@ function readHash() {
     for (const [k, v] of q) if (k.startsWith("prop_")) (props[k.slice(5)] = props[k.slice(5)] || []).push(v);
     S.search = { q: q.get("q") || "", where: q.getAll("where"), mode: q.get("mode") || "forms", whole: q.get("whole") === "1", typos: q.get("typos") === "1", nolayout: q.get("layout") === "0", w: q.get("w") || "", h: q.get("h") || "", tol: q.get("tol") || "",
       color: q.get("color") || "", ctol: q.get("ctol") || 3, type: q.getAll("type"), page: q.getAll("page"), comp: q.getAll("comp"), props };
+  } else if (path === "surfaces") {
+    // Поверхности теперь — вид раздела цветов.
+    S.type = "colors"; S.search = null; S.show.colors.view = "contrast";
   } else if (TYPES.some((t) => t.k === path)) {
     S.type = path; S.search = null;
   }
@@ -903,7 +908,7 @@ function colourWhat(i) {
 const colorViews = () => {
   const themes = projectThemes();
   const theme = themes.includes(S.themes[S.project]) ? S.themes[S.project] : "";
-  return seg([["colors", "Colors"], ["gradients", "Gradients"]], S.show.colors.view, "cview")
+  return seg([["colors", "Colors"], ["gradients", "Gradients"], ["contrast", "Contrast"], ["surfaces", "Surfaces"]], S.show.colors.view, "cview")
     + (themes.length > 1 ? `<div class="field" style="margin-top:8px"><span class="label">Compare with theme</span>${select("theme", [["", "All themes"], ...themes.map((m) => [m, modeName(m)])], theme)}</div>` : "");
 };
 function bindColorViews(root) {
@@ -915,6 +920,7 @@ function bindColorViews(root) {
 async function viewColors(el, stale) {
   const sh = S.show.colors;
   if (sh.view === "gradients") return viewGradients(el, stale);
+  if (sh.view === "contrast" || sh.view === "surfaces") return viewSurfaces(el, stale);
   if (sh.view === "tokens") sh.view = "colors";
   const d = await api("/api/colours" + fq());
   if (stale()) return;
@@ -1382,7 +1388,6 @@ async function viewEffects(el, stale) {
 
 /* ───────────────────── surfaces ───────────────────── */
 
-const SVIEWS = [["contrast", "Text contrast"], ["surfaces", "Surfaces"], ["components", "Components"]];
 const KCATS = [["fail", "Fails WCAG"], ["unknown", "Check by eye"], ["aa", "AA"], ["aaa", "AAA"], ["all", "All"]];
 const KHINT = {
   fail: "Text that is hard to read: below 4.5:1, or 3:1 for large text (24 px, or 18.66 px bold).",
@@ -1392,8 +1397,6 @@ const KHINT = {
 const TONES = { light: "light", dark: "dark", image: "image", gradient: "gradient", mixed: "partly on a plate", none: "no background" };
 const surfCss = (s) => (s.kind === "solid" ? colorCss("#" + s.color) : s.kind === "image" ? "repeating-linear-gradient(45deg,#9a9a9a 0 4px,#c4c4c4 0 8px)" : s.kind === "gradient" ? "linear-gradient(135deg,#7a7ff0,#f07ab8)" : s.kind === "mixed" ? "linear-gradient(90deg,#ececec 50%,#2a2a2e 50%)" : "transparent");
 const onSample = (bg, fg, fa = 100) => `<span class="sample onbg" style="background:${bg}"><b style="color:${colorCss("#" + fg)};opacity:${fa / 100}">Aa</b></span>`;
-const toneBar = (t, total) => `<span class="tonebar">${["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => t[k]).map((k) =>
-  `<i class="t-${k}" style="flex:${t[k]}" title="${esc(TONES[k])}: ${num(t[k])}"></i>`).join("")}</span><small class="muted">${["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => t[k]).map((k) => `${TONES[k]} ${Math.round((t[k] / total) * 100)}%`).join(" · ")}</small>`;
 
 const CSTATUS = { fail: '<span class="tag off">Fails</span>', aa: '<span class="tag near">AA</span>', aaa: '<span class="tag ok">AAA</span>', unknown: '<span class="tag plain">Check by eye</span>' };
 
@@ -1441,49 +1444,47 @@ function surfaceDetail(d, s, box) {
 }
 
 async function viewSurfaces(el, stale) {
-  const sh = S.show.surfaces;
+  const sh = S.show.surfaces, view = S.show.colors.view;
   const d = await api("/api/surfaces" + fq());
   if (stale()) return;
   if (!d.surfaces.length) {
-    $("#tname").innerHTML = "Surfaces";
+    $("#tname").innerHTML = "Colors";
+    drawShow(colorViews(), bindColorViews);
     el.innerHTML = `<div class="empty"><b>Surfaces are not computed yet</b>coloro finds what each layer lies on while loading a file. Files loaded with an older version need one update.<br><button class="b main" id="sfUpd">Update</button></div>`;
     $("#sfUpd").onclick = () => startUpdate({ project: S.project });
     return;
   }
   const T = d.totals, q = (sh.q || "").toLowerCase();
   const hit = (...xs) => !q || xs.some((x) => String(x || "").toLowerCase().includes(q));
-  $("#tname").innerHTML = `Surfaces<span>${pl(T.surfaces, "surface")}</span>`;
+  $("#tname").innerHTML = `Colors<span>${pl(T.surfaces, "surface")}</span>`;
   const kc = (k) => d.contrast.filter((i) => k === "all" || i.status === k);
-  drawShow(`${seg(SVIEWS, sh.view, "sview")}
-    ${sh.view === "contrast" ? `<div class="sec">Status</div>${chips(KCATS.map(([k, t]) => [k, t, kc(k).reduce((n, i) => n + i.uses, 0)]), sh.cat)}` : ""}
-    ${sh.view === "components" ? `<div class="sec">Show</div>${chips([["unusual", "On an unusual surface", d.components.filter((g) => g.unusual_uses).length], ["all", "All", d.components.length]], sh.ccat, "ccat")}` : ""}
+  drawShow(`${colorViews()}
+    ${view === "contrast" ? `<div class="sec">Status</div>${chips(KCATS.map(([k, t]) => [k, t, kc(k).reduce((n, i) => n + i.uses, 0)]), sh.cat)}` : ""}
     <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Hex, token, style or component"></div>
     <p class="label" style="padding:6px;margin:0">The surface is what a layer lies on: the fill of the nearest frame or of a plate under it. Translucent fills are mixed with what is below, as the eye sees them.</p>`,
   (root) => {
     bindShow(root, "surfaces", () => route());
-    root.querySelectorAll("[data-sview]").forEach((b) => (b.onclick = () => { sh.view = b.dataset.sview; save(); route(); }));
-    root.querySelectorAll("[data-ccat]").forEach((b) => (b.onclick = () => { sh.ccat = b.dataset.ccat; save(); route(); }));
+    bindColorViews(root);
   });
-  const title = sh.view === "contrast" ? `Text contrast · ${KCATS.find(([k]) => k === sh.cat)[1]}` : sh.view === "surfaces" ? "Surfaces" : sh.ccat === "unusual" ? "Components on an unusual surface" : "Components by surface";
-  const hint = sh.view === "contrast" ? KHINT[sh.cat] : sh.view === "surfaces" ? "Every background in the files and what is placed on it. Click a row to see the places."
-    : "Where each component stands: on light, dark, images or gradients. A component that almost always stands on light and sometimes on dark probably needs another variant there.";
+  const title = view === "contrast" ? `Text contrast · ${KCATS.find(([k]) => k === sh.cat)[1]}` : "Surfaces";
+  const hint = view === "contrast" ? KHINT[sh.cat] : "Every background in the files and what is placed on it: text colors with their contrast and components. Open a row to see the list.";
   el.innerHTML = `<div class="head"><div class="grow"><h1>${esc(title)}</h1><p class="sub">${esc(hint)}</p></div></div><div class="list" id="list"></div>`;
   {
-    const go = (view, cat) => () => { sh.view = view; if (view === "contrast") sh.cat = cat; else sh.ccat = cat; sh.q = ""; save(); route(); };
+    const goK = (cat) => () => { S.show.colors.view = "contrast"; sh.cat = cat; sh.q = ""; save(); route(); };
     summary(el, {
       tiles: [{ t: "Texts checked", v: num(T.texts), sub: `on ${pl(T.surfaces, "surface")}` },
         { t: "Fail WCAG", v: num(T.fail), sub: T.texts ? `${pct((T.fail / T.texts) * 100)} of texts` : "" },
         { t: "Check by eye", v: num(T.unknown), sub: "on images, gradients, plate edges" },
         { t: "Unusual placements", v: num(T.unusual), sub: `of ${pl(T.placed, "component")} placed` }],
       recs: [
-        { n: T.fail, title: `Fix the contrast of ${pl(T.fail, "text")}`, text: "Below the WCAG AA minimum: hard to read for many people, and in sunlight for everyone. Use a darker or lighter text token for this surface.", go: go("contrast", "fail") },
-        { n: T.unusual, title: `Check ${pl(T.unusual, "component")} on an unusual surface`, text: "The component almost always stands on light (or dark) and here it does not. Usually another variant is meant.", go: go("components", "unusual") },
-        { n: T.unknown, title: `Check ${pl(T.unknown, "text")} by eye`, text: "On images, gradients or the edge of a plate the contrast depends on the spot. A scrim or a whole plate under the text makes it safe.", go: go("contrast", "unknown") },
+        { n: T.fail, title: `Fix the contrast of ${pl(T.fail, "text")}`, text: "Below the WCAG AA minimum: hard to read for many people, and in sunlight for everyone. Use a darker or lighter text token for this surface.", go: goK("fail") },
+        { n: T.unusual, title: `Check ${pl(T.unusual, "component")} on an unusual surface`, text: "The component almost always stands on light (or dark) and here it does not. Usually another variant is meant.", go: () => go("components", { values: { cat: "unusual" } }), label: "Components" },
+        { n: T.unknown, title: `Check ${pl(T.unknown, "text")} by eye`, text: "On images, gradients or the edge of a plate the contrast depends on the spot. A scrim or a whole plate under the text makes it safe.", go: goK("unknown") },
       ],
     });
   }
   const list = $("#list");
-  if (sh.view === "contrast") {
+  if (view === "contrast") {
     const items = kc(sh.cat).filter((i) => hit(i.color, i.bg_color, i.surface, ...(i.fg_tokens || [])));
     const tag = CSTATUS;
     rowsWithPlaces(list, items, (i, n) => `<div class="crow" data-n="${n}">${onSample(surfCss({ kind: i.bg_kind, color: i.bg_color }), i.color, i.alpha)}
@@ -1491,7 +1492,7 @@ async function viewSurfaces(el, stale) {
         ${counts({ uses: i.uses, screens: i.screens, files: i.files, unit: "text" })}
         <div class="what">${tag[i.status]}${i.ratio != null ? `<b>${i.ratio}:1</b>` : ""}</div></div>`,
     searchPlaces((i) => ({ kind: "surface", what: "text", bg: i.bg ?? "none", fg: i.fg })));
-  } else if (sh.view === "surfaces") {
+  } else {
     const items = d.surfaces.filter((s) => hit(s.color, s.name, ...(s.tokens || []), ...s.top_components.map((c) => c.name)));
     rowsWithPlaces(list, items, (s, n) => `<div class="crow" data-n="${n}"><span class="sample" style="background:${surfCss(s)};border:1px solid var(--line)"></span>
         <div class="name"><b>${esc(s.name)}</b><small>${s.kind === "solid" ? `<span class="mono">#${esc(s.color)}${s.alpha < 100 ? " " + s.alpha + "%" : ""}</span> · ${s.src ? (s.src === "v" ? "variable" : "style") : (s.tokens || []).length ? "token value set by hand" : "set by hand"} · ${esc(TONES[s.tone])}` : esc(TONES[s.tone])}</small></div>
@@ -1499,13 +1500,6 @@ async function viewSurfaces(el, stale) {
         <div class="num c-files">${s.fail ? `<span class="dn">${num(s.fail)} fail</span>` : ""}</div>
         <div class="what"><span class="onrow">${s.text_colors.slice(0, 6).map((c) => onSample(surfCss(s), c.color, c.alpha)).join("")}</span>${s.top_components.slice(0, 3).map((c) => esc(c.name)).join(", ")}</div></div>`,
     (s, box) => surfaceDetail(d, s, box));
-  } else {
-    const items = d.components.filter((g) => (sh.ccat === "all" || g.unusual_uses) && hit(g.name));
-    rowsWithPlaces(list, items, (g, n) => `<div class="crow" data-n="${n}"><span class="sample">${esc((g.name || "?").slice(0, 1))}</span>
-        <div class="name"><b>${esc(g.name)}</b><small>${toneBar(g.tones, g.uses)}</small></div>
-        ${counts({ uses: g.uses, screens: g.screens, files: g.files, unit: "place" })}
-        <div class="what">${g.unusual.length ? g.unusual.map((u) => `<span class="tag near">Unusual</span><b>${num(u.uses)}</b> on ${esc(TONES[u.tone])}`).join(" ") : '<span class="muted">Consistent</span>'}</div></div>`,
-    searchPlaces((g) => ({ kind: "surface", what: "component", [g.kind]: g.name, bgs: g.unusual.flatMap((u) => u.bgs).join(",") })));
   }
 }
 
@@ -1653,6 +1647,7 @@ function componentsSummary(el, c, det, over) {
       { t: "Unnamed layers", v: num(OT().generic), sub: "frames and groups like Frame 12", key: "generic" }],
     recs: [
       { n: det.total, title: `Check ${pl(det.total, "possibly detached copy", "possibly detached copies")}`, text: "Frames named like a component but not instances. Re-link them so library updates reach them.", go: () => { sh.cat = "detached"; save(); route(); } },
+      { n: c.items.filter(unusualOf).length, title: `Check ${pl(c.items.filter(unusualOf).length, "component")} on an unusual surface`, text: "Almost always on light (or dark), and in a few places not. Usually another variant is meant there.", go: () => { sh.cat = "unusual"; save(); route(); } },
       { n: heavy.length, title: `Consider variants for ${pl(heavy.length, "component")}`, text: "More than half of their instances are overridden. A missing variant is often the reason.", go: () => { sh.cat = "overridden"; save(); route(); } },
       { n: OT().generic || 0, title: `Rename ${pl(OT().generic || 0, "layer")} with default names`, text: "Frame 12 or Group 7 placed by hand. Clear names help developers and search." },
     ],
@@ -1668,7 +1663,8 @@ async function viewComponents(el, stale) {
   SURF_OF = Object.fromEntries(((sf && sf.components) || []).map((x) => [x.name, x]));
   const inst = c.items.reduce((n, g) => n + g.instances, 0);
   const over = c.items.filter((g) => g.overridden > 0);
-  const cats = [["all", "All", c.items.length], ["overridden", "Overridden", over.length], ["detached", "Possibly detached", det.total]];
+  const odd = c.items.filter(unusualOf).sort((a, b) => unusualOf(b) - unusualOf(a));
+  const cats = [["all", "All", c.items.length], ["overridden", "Overridden", over.length], ["unusual", "On an unusual surface", odd.length], ["detached", "Possibly detached", det.total]];
   $("#tname").innerHTML = `Components<span>${pl(inst, "instance")}</span>`;
   drawShow(`<div class="sec">Show</div>${chips(cats, sh.cat)}
     <div class="field" style="margin-top:6px"><span class="label">Component or set name</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="All components"></div>
@@ -1684,8 +1680,10 @@ async function viewComponents(el, stale) {
     componentsSummary(el, c, det, over);
     return;
   }
-  const items = sh.cat === "overridden" ? over.slice().sort((a, b) => b.overridden - a.overridden) : c.items;
-  el.innerHTML = `<div class="head"><div class="grow"><h1>${sh.cat === "overridden" ? "Overridden instances" : "Components in use"}</h1><p class="sub">${pl(c.total, "set or component", "sets and components")} · ${pl(inst, "instance")}. Open a row to filter by variant properties and see where they are used.</p></div></div>
+  const items = sh.cat === "overridden" ? over.slice().sort((a, b) => b.overridden - a.overridden) : sh.cat === "unusual" ? odd : c.items;
+  el.innerHTML = `<div class="head"><div class="grow"><h1>${sh.cat === "overridden" ? "Overridden instances" : sh.cat === "unusual" ? "Components on an unusual surface" : "Components in use"}</h1><p class="sub">${sh.cat === "unusual"
+    ? "The component almost always stands on light (or on dark), and in a few places it does not. Usually another variant is meant there. Open a row and pick the surface to see those places."
+    : `${pl(c.total, "set or component", "sets and components")} · ${pl(inst, "instance")}. Open a row to filter by variant properties, see where they are used and on which surfaces.`}</p></div></div>
     <div class="list" id="list"></div>`;
   componentsSummary(el, c, det, over);
   const thumb = (g) => (sh.previews && g.preview ? `<span class="sample kthumb" data-pf="${esc(g.preview[0])}" data-pn="${esc(g.preview[1])}"></span>`
@@ -1693,7 +1691,8 @@ async function viewComponents(el, stale) {
   rowsWithPlaces($("#list"), items, (g, n) => `<div class="crow" data-n="${n}">${thumb(g)}
       <div class="name">${esc(g.title)}<small>${g.remote ? "Library" : "Local"} · ${Object.keys(g.variants).length ? Object.entries(g.variants).map(([k, vs]) => `${esc(k)}: ${Object.keys(vs).length}`).join(" · ") : "No variants"}</small>${miniTones(SURF_OF[g.set || g.cname])}</div>
       ${counts({ uses: g.instances, screens: g.screens, files: g.files, unit: "instance" })}
-      <div class="what">${g.overridden ? `<span class="tag near">Overridden</span>${pct((g.overridden * 100) / g.instances)} of instances` : '<span class="muted">Not overridden</span>'}</div></div>`,
+      <div class="what">${sh.cat === "unusual" ? SURF_OF[g.set || g.cname].unusual.map((u) => `<span class="tag near">Unusual</span><b>${num(u.uses)}</b> on ${esc(TONES[u.tone])}`).join(" ")
+        : g.overridden ? `<span class="tag near">Overridden</span>${pct((g.overridden * 100) / g.instances)} of instances` : '<span class="muted">Not overridden</span>'}</div></div>`,
   (g, box) => openComponent(box, g, {}));
   if (sh.previews) {
     loadPreviews(el);
@@ -1761,8 +1760,7 @@ function openComponent(box, g, chosen) {
   componentPlaces(box, g, q);
 }
 
-/* На каких поверхностях стоит компонент — из раздела Surfaces. */
-let SURF_OF = {};
+/* Полоска «на каких фонах стоит» в строке компонента. */
 const miniTones = (x) => (x && x.uses ? `<span class="tonebar mini" title="${esc(["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => x.tones[k]).map((k) => `${TONES[k]} ${Math.round((x.tones[k] / x.uses) * 100)}%`).join(" · "))}">${["light", "dark", "image", "gradient", "mixed", "none"].filter((k) => x.tones[k]).map((k) =>
   `<i class="t-${k}" style="flex:${x.tones[k]}"></i>`).join("")}</span>` : "");
 
@@ -2127,7 +2125,7 @@ $("#veil").onclick = (e) => { if (e.target.id === "veil") closeDialog(); };
 
 /* ───────────────────── start ───────────────────── */
 
-const VIEWS = { comments: viewComments, surfaces: viewSurfaces, colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
+const VIEWS = { comments: viewComments, colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
   images: viewImages, components: viewComponents, search: viewSearch };
 
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });
