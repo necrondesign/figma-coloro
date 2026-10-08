@@ -9,27 +9,32 @@
 </head>
 <body>
 
-<aside class="panel" id="left" aria-label="Projects and files">
-  <div class="ph">
+<aside class="panel stack" id="left" aria-label="Projects and files">
+  <div class="blk"><div class="ph">
     <span class="brand">coloro</span><span class="grow"></span>
-    <button class="b sm" id="newProj" title="Create a new project"><svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>New project</button>
-    <button class="ib collapse" title="Collapse panel" data-collapse="l"><svg class="i" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg></button>
+    <button class="ib collapse" title="Collapse all three blocks" data-collapse="l"><svg class="i" viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg></button>
+  </div></div>
+  <div class="blk">
+    <div class="bh"><span class="title">Projects</span><span class="grow"></span>
+      <button class="b sm" id="newProj" title="Create a new project"><svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>New project</button></div>
+    <div class="projwrap">
+      <button class="proj" id="projBtn" aria-haspopup="menu"><span class="pdot" id="projDot"></span>
+        <span class="grow"><b id="projName">—</b><br><span class="muted" id="projMeta"></span></span>
+        <svg class="i" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></button>
+      <div class="menu" id="projMenu" role="menu"></div>
+    </div>
   </div>
-  <div class="projwrap">
-    <button class="proj" id="projBtn" aria-haspopup="menu"><span class="pdot" id="projDot"></span>
-      <span class="grow"><b id="projName">—</b><br><span class="muted" id="projMeta"></span></span>
-      <svg class="i" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></button>
-    <div class="menu" id="projMenu" role="menu"></div>
-  </div>
-  <div class="sec">Files<span class="grow"></span>
-    <button class="ib sm" title="Select all files" id="allFiles"><svg class="i" viewBox="0 0 16 16"><path d="m3 8 3 3 7-7"/></svg></button>
-    <button class="ib sm" title="Add files" id="addBtn"><svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button></div>
+  <div class="blk grow-blk">
+    <div class="bh"><span class="title">Files</span><span class="grow"></span>
+      <button class="ib sm" title="Select all files" id="allFiles"><svg class="i" viewBox="0 0 16 16"><path d="m3 8 3 3 7-7"/></svg></button>
+      <button class="b sm" title="Add Figma files to this project" id="addBtn"><svg class="i" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>Add files</button></div>
   <div class="scroll" id="files"></div>
   <div class="pf">
     <div class="total"><i id="totalBar"></i></div>
     <div class="row"><span class="label grow" id="jobStatus"></span>
       <a class="ib" id="export" href="/api/export" download title="Download the report: one HTML file to share" hidden><svg class="i" viewBox="0 0 16 16"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg></a>
       <button class="b main" id="updBtn"></button></div>
+  </div>
   </div>
 </aside>
 <button class="mini" id="miniL" data-open="l" aria-label="Projects and files">
