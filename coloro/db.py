@@ -142,15 +142,11 @@ CREATE TABLE IF NOT EXISTS snapshots (
     PRIMARY KEY (taken_at, file_key)
 ) WITHOUT ROWID;
 
--- Комментарии и версии файла (см. activity.py). parent_id — у ответа в обсуждении;
+-- Комментарии файла (см. comments.py). parent_id — у ответа в обсуждении;
 -- node_id — слой, к которому приколот комментарий; author — ник в Figma.
 CREATE TABLE IF NOT EXISTS comments (
     file_key TEXT, id TEXT, parent_id TEXT, node_id TEXT, message TEXT, author TEXT,
     created_at TEXT, resolved_at TEXT,
-    PRIMARY KEY (file_key, id)
-) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS versions (
-    file_key TEXT, id TEXT, created_at TEXT, label TEXT, description TEXT, author TEXT,
     PRIMARY KEY (file_key, id)
 ) WITHOUT ROWID;
 -- Когда забирали и что ответила Figma: error — например, forbidden, если токену не хватает прав.
@@ -232,6 +228,8 @@ def connect(path: str | Path) -> sqlite3.Connection:
                         con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
             for index in _DROPPED:
                 con.execute(f"DROP INDEX IF EXISTS {index}")
+            con.execute("DROP TABLE IF EXISTS versions")        # история версий больше не хранится
+            con.execute("DELETE FROM activity WHERE kind = 'versions'")
             con.commit()
             _to_projects(con)
             _READY.add(str(p.resolve()))

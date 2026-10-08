@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import db as dbm
-from . import activity, effects, health, inspect, inventory, memo, report, rules, scales, search, surfaces, tokens, typography
+from . import comments, effects, health, inspect, inventory, memo, report, rules, scales, search, surfaces, tokens, typography
 from .figma import Figma, FigmaError
 from .filters import NODE_JOIN, Filter
 from .load import update_all
@@ -282,7 +282,7 @@ def add_source(con, url: str, pages, project) -> dict:
 
 
 _FILE_TABLES = ("nodes", "paints", "pages", "files", "snapshots", "components", "props", "effects", "images",
-                "comments", "versions", "activity")
+                "comments", "activity")
 
 
 def _drop_orphans(con, keys) -> None:
@@ -481,9 +481,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(remember("detached", lambda: search.detached(con, filt)))
         if path == "/api/scales":
             return self._json(remember("scales", lambda: scales.report(con, filt)))
-        if path == "/api/activity":
+        if path == "/api/comments":
             # Без памяти результатов: комментарии меняются без новой версии файла.
-            return self._json(activity.report(con, filt))
+            return self._json(comments.report(con, filt))
         if path == "/api/surfaces":
             return self._json(remember("surfaces", lambda: surfaces.report(con, filt, idx)))
         if path == "/api/effects":

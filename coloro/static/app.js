@@ -75,7 +75,7 @@ const DEFAULT_SHOW = {
   spacing: { group: "spacing", cat: "near" },
   effects: { cat: "unbound" },
   surfaces: { view: "contrast", cat: "fail", ccat: "unusual", q: "" },
-  activity: { view: "comments", cat: "open", named: true, q: "" },
+  comments: { cat: "open", sort: "newest", author: "", file: "", group: false, q: "" },
   images: { cat: "repeated" },
   components: { cat: "all", q: "", previews: true },
   text: { cat: "all", q: "", mode: "forms", sort: "uses", whole: false, typos: false, nolayout: false },
@@ -416,7 +416,7 @@ const TYPES = [
   { k: "surfaces", t: "Surfaces", icon: "M2.5 10.5 8 13.5l5.5-3M2.5 7.5 8 10.5l5.5-3L8 4.5z" },
   { k: "effects", t: "Effects", icon: "M4 4h7v7H4zM6 13h7V6" },
   { k: "images", t: "Images", icon: "M2.5 3.5h11v9h-11zM2.5 10l3-3 3 3 2-2 3 3" },
-  { k: "activity", t: "Versions & comments", short: "Activity", icon: "M8 4.5V8l2.5 1.5M2.5 8a5.5 5.5 0 1 0 1.6-3.9M2.5 2.5v2.6h2.6" },
+  { k: "comments", t: "Comments", icon: "M3 3.5h10v7H7.5L4.5 13v-2.5H3z" },
   { k: "components", t: "Components", icon: "M8 2 11 5 8 8 5 5zM8 8l3 3-3 3-3-3z" },
 ];
 
@@ -1509,87 +1509,98 @@ async function viewSurfaces(el, stale) {
   }
 }
 
-/* ───────────────────── versions and comments ───────────────────── */
+/* ───────────────────── comments ───────────────────── */
 
-const ACATS = [["open", "Open"], ["stale", "Open over 30 days"], ["resolved", "Resolved"], ["all", "All"]];
-const inACat = (t, k) => (k === "open" ? t.open : k === "stale" ? t.stale : k === "resolved" ? !t.open : true);
+const MCATS = [["open", "Open"], ["unanswered", "No reply yet"], ["stale", "Open over 30 days"], ["resolved", "Resolved"], ["all", "All"]];
+const inMCat = (t, k) => (k === "open" ? t.open : k === "unanswered" ? t.open && !t.replies.length : k === "stale" ? t.stale : k === "resolved" ? !t.open : true);
+const MSORTS = {
+  newest: (a, b) => String(b.created_at).localeCompare(String(a.created_at)),
+  oldest: (a, b) => String(a.created_at).localeCompare(String(b.created_at)),
+  quiet: (a, b) => (b.quiet ?? 0) - (a.quiet ?? 0),
+  replies: (a, b) => b.replies.length - a.replies.length,
+};
 const initial = (s) => esc(((s || "?").trim()[0] || "?").toUpperCase());
-const fmtDate = (iso) => (iso ? `${day(iso)}, ${new Date(iso).getFullYear()}` : "");
+const daysText = (n) => (n == null ? "" : n === 0 ? "today" : `${num(n)} ${n === 1 ? "day" : "days"}`);
 
-async function viewActivity(el, stale) {
-  const sh = S.show.activity;
-  const [d, h] = await Promise.all([api("/api/activity" + fq()), api("/api/history" + fq()).catch(() => null)]);
+function threadRow(t, n) {
+  const state = t.open ? (t.stale ? '<span class="tag off">Open, old</span>' : t.replies.length ? '<span class="tag near">Open</span>' : '<span class="tag near">No reply</span>')
+    : '<span class="tag ok">Resolved</span>';
+  return `<div class="crow" data-n="${n}"><span class="sample avatar">${initial(t.author)}</span>
+    <div class="name"><span class="msg">${esc(t.message)}</span><small>${esc(t.author)} · ${esc(ago(t.created_at))}${t.screen ? ` · ${esc(t.page || "")} › ${esc(t.screen)}` : ""}${t.replies.length ? ` · ${pl(t.replies.length, "reply", "replies")}` : ""}${t.people.length > 1 ? ` · ${pl(t.people.length, "person", "people")}` : ""}</small></div>
+    <div class="num">${t.open ? `${daysText(t.age)} <span class="muted">open</span>` : `<span class="muted">closed in</span> ${daysText(t.open_days)}`}</div>
+    <div class="num c-files"><span class="muted">${t.open && t.replies.length ? `last reply ${esc(ago(t.last_at))}` : esc(t.file)}</span></div>
+    <div class="what">${state}<a href="${esc(t.link)}" target="_blank" rel="noopener">Figma ↗</a></div></div>`;
+}
+function threadBody(t, box) {
+  box.innerHTML = `<div class="thread">${[{ author: t.author, message: t.message, created_at: t.created_at }, ...t.replies].map((r) =>
+    `<div class="tmsg"><span class="sample avatar">${initial(r.author)}</span><div><b>${esc(r.author)}</b> <span class="muted">${esc(ago(r.created_at))}</span><p>${esc(r.message)}</p></div></div>`).join("")}
+    <div class="row"><a class="b sm" href="${esc(t.link)}" target="_blank" rel="noopener">Open in Figma ↗</a>${t.resolved_at ? `<span class="muted">Resolved ${esc(ago(t.resolved_at))}</span>` : ""}</div></div>`;
+}
+
+async function viewComments(el, stale) {
+  const sh = S.show.comments;
+  const d = await api("/api/comments" + fq());
   if (stale()) return;
   const T = d.totals;
   if (!d.checked) {
-    $("#tname").innerHTML = "Versions & comments";
-    el.innerHTML = `<div class="empty"><b>Versions and comments are not loaded yet</b>Stealer takes them from Figma on every update. One update is enough.<br><button class="b main" id="acUpd">Update</button></div>`;
-    $("#acUpd").onclick = () => startUpdate({ project: S.project });
+    $("#tname").innerHTML = "Comments";
+    el.innerHTML = `<div class="empty"><b>Comments are not loaded yet</b>Stealer takes them from Figma on every update. One update is enough.<br><button class="b main" id="cmUpd">Update</button></div>`;
+    $("#cmUpd").onclick = () => startUpdate({ project: S.project });
     return;
   }
   const q = (sh.q || "").toLowerCase();
-  const hit = (...xs) => !q || xs.some((x) => String(x || "").toLowerCase().includes(q));
-  $("#tname").innerHTML = `Versions & comments<span>${pl(T.open, "open thread")}</span>`;
-  drawShow(`${seg([["comments", "Comments"], ["versions", "Versions"]], sh.view, "aview")}
-    ${sh.view === "comments" ? `<div class="sec">Show</div>${chips(ACATS.map(([k, t]) => [k, t, d.comments.filter((x) => inACat(x, k)).length]), sh.cat)}`
-      : `<div class="tg" data-named><span>Named versions only</span><span class="sw ${sh.named ? "on" : ""}" role="switch" aria-checked="${sh.named}"></span></div>
-         <p class="label" style="padding:0 6px;margin:0">Measurements of the project are shown between the versions: they tell after which version things got better or worse.</p>`}
-    <div class="field" style="margin-top:6px"><span class="label">Find in the list</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Text, author, screen"></div>`,
+  const base = d.threads.filter((t) => (!sh.author || t.people.includes(sh.author)) && (!sh.file || t.file === sh.file)
+    && (!q || [t.message, t.author, t.screen, t.page, ...t.replies.map((r) => r.message)].some((x) => String(x || "").toLowerCase().includes(q))));
+  const items = base.filter((t) => inMCat(t, sh.cat)).sort(MSORTS[sh.sort] || MSORTS.newest);
+  $("#tname").innerHTML = `Comments<span>${pl(T.open, "open thread")}</span>`;
+  drawShow(`<div class="sec">Show</div>${chips(MCATS.map(([k, t]) => [k, t, base.filter((x) => inMCat(x, k)).length]), sh.cat)}
+    <div class="field" style="margin-top:6px"><span class="label">Sort by</span>${select("sort", [["newest", "Newest first"], ["oldest", "Oldest first"], ["quiet", "Longest without a reply"], ["replies", "Most replies"]], sh.sort)}</div>
+    <div class="field"><span class="label">Person</span>${select("author", [["", "Everyone"], ...d.authors.map((a) => [a.name, `${a.name} · ${a.open} open`])], sh.author)}</div>
+    ${d.files.length > 1 ? `<div class="field"><span class="label">File</span>${select("file", [["", "All files"], ...d.files.map((f) => [f, f])], sh.file)}</div>` : ""}
+    <div class="tg" data-group><span>Group by screen</span><span class="sw ${sh.group ? "on" : ""}" role="switch" aria-checked="${sh.group}"></span></div>
+    <div class="field" style="margin-top:6px"><span class="label">Find in comments</span><input class="in" data-q="q" value="${esc(sh.q)}" placeholder="Text, person, screen"></div>`,
   (root) => {
-    bindShow(root, "activity", () => route());
-    root.querySelectorAll("[data-aview]").forEach((b) => (b.onclick = () => { sh.view = b.dataset.aview; save(); route(); }));
-    const nm = root.querySelector("[data-named]");
-    if (nm) nm.onclick = () => { sh.named = !sh.named; save(); route(); };
+    bindShow(root, "comments", () => route());
+    root.querySelector("[data-group]").onclick = () => { sh.group = !sh.group; save(); route(); };
   });
-  const lost = Object.entries(d.access || {});
-  const notice = lost.length ? `<div class="notice">The Figma token cannot read ${lost.map(([k]) => k).join(" and ")} of ${esc(lost[0][1].slice(0, 3).join(", "))}${lost[0][1].length > 3 ? "…" : ""}. Create a token with read access to comments and versions. <a id="acTok">Open settings</a></div>` : "";
-  const goC = (cat) => () => { sh.view = "comments"; sh.cat = cat; sh.q = ""; save(); route(); };
-  if (sh.view === "comments") {
-    const items = d.comments.filter((t) => inACat(t, sh.cat) && hit(t.message, t.author, t.screen, t.page, t.file, ...t.replies.map((r) => r.message)));
-    el.innerHTML = `<div class="head"><div class="grow"><h1>Comments · ${esc(ACATS.find(([k]) => k === sh.cat)[1])}</h1><p class="sub">Discussions in the files, with the screen each one is pinned to. Open a thread to read the replies.</p></div></div>${notice}<div class="list" id="list"></div>`;
-    rowsWithPlaces($("#list"), items, (t, n) => `<div class="crow" data-n="${n}"><span class="sample avatar">${initial(t.author)}</span>
-        <div class="name"><span class="msg">${esc(t.message)}</span><small>${esc(t.author)} · ${esc(ago(t.created_at))}${t.screen ? ` · ${esc(t.page || "")} › ${esc(t.screen)}` : ""}${t.replies.length ? ` · ${pl(t.replies.length, "reply", "replies")}` : ""}</small></div>
-        <div class="num">${t.age != null ? `${num(t.age)} <span class="muted">${t.age === 1 ? "day" : "days"}</span>` : ""}</div>
-        <div class="num c-files"><span class="muted">${esc(t.file)}</span></div>
-        <div class="what">${t.open ? (t.stale ? '<span class="tag off">Open, old</span>' : '<span class="tag near">Open</span>') : '<span class="tag ok">Resolved</span>'}<a href="${esc(t.link)}" target="_blank" rel="noopener">Figma ↗</a></div></div>`,
-    (t, box) => {
-      box.innerHTML = `<div class="thread">${[{ author: t.author, message: t.message, created_at: t.created_at }, ...t.replies].map((r) =>
-        `<div class="tmsg"><span class="sample avatar">${initial(r.author)}</span><div><b>${esc(r.author)}</b> <span class="muted">${esc(ago(r.created_at))}</span><p>${esc(r.message)}</p></div></div>`).join("")}
-        <a class="b sm" href="${esc(t.link)}" target="_blank" rel="noopener">Open in Figma ↗</a></div>`;
-    });
-  } else {
-    // Версии и замеры проекта на одной ленте: между ними видно, что изменилось.
-    const vs = d.versions.filter((v) => (!sh.named || v.label) && hit(v.label, v.description, v.author, v.file));
-    const pts = (h && h.points) || [];
-    const marks = pts.map((p, i) => ({ snap: true, created_at: p.taken_at, metrics: p.metrics, prev: i ? pts[i - 1].metrics : null }));
-    const feed = [...vs, ...(q ? [] : marks)].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
-    el.innerHTML = `<div class="head"><div class="grow"><h1>Versions${sh.named ? " · named" : ""}</h1><p class="sub">${pl(T.versions, "version")} loaded, ${num(T.named)} named. ${pts.length ? `${pl(pts.length, "measurement")} of the project between them.` : "Measurements appear after updates."}</p></div></div>${notice}<div class="list" id="list"></div>`;
-    const metricLine = (m, prev) => HISTORY.filter((x) => m[x.key] != null).map((x) =>
-      `${esc(x.title)} <b>${x.pct ? pct(m[x.key]) : num(m[x.key])}</b>${prev && prev[x.key] != null ? " " + trendText(x.key, m[x.key] - prev[x.key], x.pct) : ""}`).join(" · ");
-    rowsWithPlaces($("#list"), feed, (v, n) => v.snap
-      ? `<div class="crow snap" data-n="${n}"><span class="sample"><svg class="i" viewBox="0 0 16 16"><path d="M2.5 12.5h11M4 10l3-3 2 2 3-4"/></svg></span>
-          <div class="name"><b>Measured</b> <span class="muted">${esc(fmtDate(v.created_at))}</span><small>${metricLine(v.metrics, v.prev)}</small></div><div></div><div></div><div></div></div>`
-      : `<div class="crow" data-n="${n}"><span class="sample avatar">${initial(v.author)}</span>
-          <div class="name"><b>${esc(v.label || "Autosave")}</b><small>${v.description ? esc(v.description.slice(0, 160)) + " · " : ""}${esc(v.author)} · ${esc(fmtDate(v.created_at))}</small></div>
-          <div class="num"><span class="muted">${esc(ago(v.created_at))}</span></div><div class="num c-files"><span class="muted">${esc(v.file)}</span></div>
-          <div class="what"><a href="${esc(v.link)}" target="_blank" rel="noopener">Figma ↗</a></div></div>`,
-    (v, box) => { box.innerHTML = v.snap ? `<p class="sub" style="padding:6px">${metricLine(v.metrics, v.prev)}</p>` : `<p class="sub" style="padding:6px;white-space:pre-wrap">${esc(v.description || "No description.")}</p>`; });
-  }
+  const goC = (cat, extra = {}) => () => { Object.assign(sh, { cat, q: "", author: "", file: "" }, extra); save(); route(); };
+  el.innerHTML = `<div class="head"><div class="grow"><h1>Comments · ${esc(MCATS.find(([k]) => k === sh.cat)[1])}</h1><p class="sub">Discussions in the files with the screen each one is pinned to. Open a thread to read it. ${pl(items.length, "thread")}.</p></div></div>
+    ${d.access.length ? `<div class="notice">The Figma token cannot read the comments of ${esc(d.access.slice(0, 3).join(", "))}${d.access.length > 3 ? "…" : ""}. Create a token with read access to comments. <a id="cmTok">Open settings</a></div>` : ""}
+    <div id="list"></div>`;
   summary(el, {
-    tiles: [{ t: "Open threads", v: num(T.open), sub: `${num(T.resolved)} resolved` },
-      { t: "Open over 30 days", v: num(T.stale), sub: "waiting for an answer" },
-      { t: "Versions this week", v: num(T.week), sub: T.week ? `by ${pl(T.authors, "person", "people")}` : "" },
-      { t: "Named versions", v: num(T.named), sub: `of ${num(T.versions)}` }],
+    tiles: [{ t: "Open", v: num(T.open), sub: `${num(T.unanswered)} with no reply` },
+      { t: "Open over 30 days", v: num(T.stale), sub: "waiting too long" },
+      { t: "Resolved", v: num(T.resolved), sub: `${num(T.week_resolved)} this week · ${num(T.week_new)} new` },
+      { t: "Typical time to resolve", v: T.median_days == null ? "—" : T.median_days === 0 ? "same day" : daysText(T.median_days), sub: "half of the threads close faster" }],
     recs: [
-      { n: T.stale, title: `Answer or resolve ${pl(T.stale, "old thread")}`, text: "Open for more than 30 days. An old open question is either done and forgotten or blocked.", go: goC("stale") },
-      { n: d.busy_screens.length ? d.busy_screens[0].open : 0, title: d.busy_screens.length ? `Most discussed: ${d.busy_screens.slice(0, 3).map((b) => `${b.screen} (${b.open})`).join(", ")}` : "",
-        text: "Screens with the most open threads. Often the places where the design is still unsettled.", go: goC("open") },
-      ...(T.versions && T.named / T.versions < 0.2 ? [{ n: T.versions - T.named, title: "Name the versions you hand off", text: "Most versions are autosaves. A named version with a description tells developers what changed and when.", go: () => { sh.view = "versions"; sh.named = false; save(); route(); } }] : []),
-      ...(lost.length ? [{ always: true, title: "Give the token access to comments and versions", text: "Without it this section stays empty for some files.", go: openSettings, label: "Open settings" }] : []),
+      { n: T.unanswered, title: `Reply to ${pl(T.unanswered, "thread")} nobody answered`, text: "Open questions without a single reply. Someone is waiting.", go: goC("unanswered", { sort: "oldest" }) },
+      { n: T.stale, title: `Close or move ${pl(T.stale, "old thread")}`, text: "Open for more than 30 days: either done and forgotten, or blocked.", go: goC("stale", { sort: "oldest" }) },
+      { n: d.screens.length && d.screens[0].open > 1 ? d.screens[0].open : 0, title: `Most discussed: ${d.screens.filter((x) => x.open).slice(0, 3).map((x) => `${x.screen} (${x.open})`).join(", ")}`,
+        text: "Screens with the most open threads: the design there is still unsettled.", go: goC("open", { group: true }) },
     ],
   });
-  const at = $("#acTok");
-  if (at) at.onclick = openSettings;
+  const tok = $("#cmTok");
+  if (tok) tok.onclick = openSettings;
+  const list = $("#list");
+  if (!sh.group) {
+    list.className = "list";
+    rowsWithPlaces(list, items, threadRow, threadBody);
+    return;
+  }
+  // По экранам: сначала экраны, где больше открытых обсуждений.
+  const groups = new Map();
+  for (const t of items) {
+    const k = t.screen_id ? t.file_key + "|" + t.screen_id : "~";
+    if (!groups.has(k)) groups.set(k, { t, list: [] });
+    groups.get(k).list.push(t);
+  }
+  const ordered = [...groups.values()].sort((a, b) => !a.t.screen_id - !b.t.screen_id
+    || b.list.filter((x) => x.open).length - a.list.filter((x) => x.open).length || b.list.length - a.list.length);
+  list.innerHTML = ordered.length ? ordered.map((g, i) => `<section class="cgroup"><div class="cgh"><b>${g.t.screen_id ? esc(g.t.screen || "Untitled") : "Not pinned to a screen"}</b>${g.t.screen_id ? "" : '<span class="muted">on the empty canvas or on a deleted layer</span>'}
+      <span class="muted">${g.t.screen_id ? `${esc(g.t.file)} › ${esc(g.t.page || "")} · ` : ""}${pl(g.list.length, "thread")}</span><span class="grow"></span>
+      ${g.t.screen_id ? `<a href="${esc(g.t.screen_link)}" target="_blank" rel="noopener">Screen in Figma ↗</a>` : ""}</div><div class="list" data-g="${i}"></div></section>`).join("")
+    : '<div class="empty"><b>Nothing here</b>No threads match the current options.</div>';
+  ordered.forEach((g, i) => rowsWithPlaces(list.querySelector(`[data-g="${i}"]`), g.list, threadRow, threadBody));
 }
 
 /* ───────────────────── images ───────────────────── */
@@ -2116,7 +2127,7 @@ $("#veil").onclick = (e) => { if (e.target.id === "veil") closeDialog(); };
 
 /* ───────────────────── start ───────────────────── */
 
-const VIEWS = { activity: viewActivity, surfaces: viewSurfaces, colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
+const VIEWS = { comments: viewComments, surfaces: viewSurfaces, colors: viewColors, tokens: viewTokensPage, typography: viewTypography, text: viewText, spacing: viewSpacing, effects: viewEffects,
   images: viewImages, components: viewComponents, search: viewSearch };
 
 addEventListener("hashchange", () => { readHash(); syncSearchForm(); route(); });

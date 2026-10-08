@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import db as dbm
-from . import activity, rules
+from . import comments, rules
 from .figma import Figma, FigmaError, Truncated
 from .walk import Ctx, Out, child_ctx, walk
 
@@ -264,7 +264,7 @@ def update_all(db_path: str | Path, token: str, sources: list[dict], workers: in
         try:
             rep = load_file(con, figma, key, pats, force=force, stop=stop, progress=progress, analyze=False)
             if rep.get("status") != "failed" and not (stop and stop.is_set()):
-                activity.fetch(con, figma, key)
+                comments.fetch(con, figma, key)
             return rep
         except FigmaError as e:
             return {"file_key": key, "name": None, "status": "failed", "error": str(e), "pages_loaded": [],
