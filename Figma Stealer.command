@@ -1,5 +1,5 @@
 #!/bin/bash
-# Double-click to open Stealer in your browser. Keep this window open while you work.
+# Double-click to open Figma Stealer in your browser. Keep this window open while you work.
 cd "$(dirname "$0")" || exit 1
 clear
 printf '\033[1m  Figma Stealer\033[0m\n\n'

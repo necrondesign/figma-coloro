@@ -141,7 +141,7 @@ A view can be opened by a link, for example `#/colors?view=contrast` or `#/searc
 python3 -m coloro serve
 ```
 
-On macOS you can also double-click `Stealer.command`. A browser opens. Then:
+On macOS you can also double-click `Figma Stealer.command`. A browser opens. Then:
 
 1. **Settings (the gear)**: paste a Figma personal access token (Figma → Settings → Security →
    Personal access tokens) with read access to file content and comments. Load the project's
